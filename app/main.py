@@ -1,27 +1,15 @@
 import io,re,zipfile,difflib
 from pathlib import Path
-from fastapi import FastAPI,Request,UploadFile,File,Form
+from fastapi import FastAPI,Request,UploadFile,File
 from fastapi.responses import HTMLResponse,StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-app=FastAPI(title="Son Tutanak UDF Web")
+app=FastAPI(title="Son Tutanak UDF Düzenleyici")
 templates=Jinja2Templates(directory=str(Path(__file__).parent/"templates"))
 
-FIELDS=[
-("basvuruNo","Başvuru No"),("dosyaNo","Dosya No"),
-("arabulucuAdi","Arabulucu"),("arabulucuTc","Arabulucu T.C. Kimlik No"),
-("arabulucuSicil","Arabulucu Sicil No"),("arabulucuAdres","Arabulucu Adres"),
-("basvurucuTcKimlik","Başvurucu T.C. Kimlik No"),("basvurucuAdiSoyadi","Başvurucu Adı Soyadı"),
-("basvurucuAdres","Başvurucu Adres"),("basvurucuVekili","Başvurucu Vekili"),
-("basvurucuTelefon","Başvurucu Telefon"),("basvurucuEposta","Başvurucu E-Posta"),
-("karsitarafTcKimlik","Karşı Taraf T.C. Kimlik No"),("karsitarafAdiSoyadi","Karşı Taraf Adı Soyadı"),
-("karsitarafAdres","Karşı Taraf Adres"),("karsitarafVekili","Karşı Taraf Vekili"),
-("uyusmazlik","Uyuşmazlık Konusu"),("baslangicTarihi","Süreç Başlangıç Tarihi"),
-("bitisTarihi","Süreç Bitiş Tarihi"),("duzenlemeYeri","Tutanak Düzenleme Yeri"),
-("duzenlemeTarihi","Tutanak Düzenleme Tarihi"),("sonuc","Sonuç")]
-
+FIELDS=[('basvuruNo', 'Başvuru No'), ('dosyaNo', 'Dosya No'), ('arabulucuAdi', 'Arabulucu'), ('arabulucuTc', 'Arabulucu T.C. Kimlik No'), ('arabulucuSicil', 'Arabulucu Sicil No'), ('arabulucuAdres', 'Arabulucu Adres'), ('basvurucuTcKimlik', 'Başvurucu T.C. Kimlik No'), ('basvurucuAdiSoyadi', 'Başvurucu Adı Soyadı'), ('basvurucuAdres', 'Başvurucu Adres'), ('basvurucuVekili', 'Başvurucu Vekili'), ('basvurucuTelefon', 'Başvurucu Telefon'), ('basvurucuEposta', 'Başvurucu E-Posta'), ('karsitarafTcKimlik', 'Karşı Taraf T.C. Kimlik No'), ('karsitarafAdiSoyadi', 'Karşı Taraf Adı Soyadı'), ('karsitarafAdres', 'Karşı Taraf Adres'), ('karsitarafVekili', 'Karşı Taraf Vekili'), ('uyusmazlik', 'Uyuşmazlık Konusu'), ('baslangicTarihi', 'Süreç Başlangıç Tarihi'), ('bitisTarihi', 'Süreç Bitiş Tarihi'), ('duzenlemeYeri', 'Tutanak Düzenleme Yeri'), ('duzenlemeTarihi', 'Tutanak Düzenleme Tarihi'), ('sonuc', 'Sonuç')]
 PAT={
-"basvuruNo":r"BAŞVURU NO\s*:\s*([^\n]*)","dosyaNo":r"DOSYA\s+NO\s*[:：]\s*([^\n]*)",
+"basvuruNo":r"BAŞVURU NO\s*[:：]\s*([^\n]*)","dosyaNo":r"DOSYA\s+NO\s*[:：]\s*([^\n]*)",
 "arabulucuAdi":r"ARABULUCU\s*[:：]\s*([^\n]*)","arabulucuTc":r"T\.C KİMLİK NUMARASI\s*[:：]\s*([^\n]*)",
 "arabulucuSicil":r"ARB\. SİCİL NUMARASI\s*[:：]\s*([^\n]*)","arabulucuAdres":r"ADRESİ\s*[:：]\s*([^\n]*)",
 "basvurucuTcKimlik":r"TC Kimlik No\s*[:：]\s*([^\n]*)","basvurucuAdiSoyadi":r"Adı Soyadı\s*[:：]\s*([^\n]*)",
@@ -36,26 +24,26 @@ PAT={
 "duzenlemeTarihi":r"Son Tutanağın Düzenlendiği Tarih\s*[:：]\s*([^\n]*)",
 "sonuc":r"Arabuluculuk Sonucu\s*[:：]\s*([^\n]*)"}
 
-def read(data):
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        xml=z.read("content.xml").decode()
-        files={n:z.read(n) for n in z.namelist()}
+def read_udf(data):
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            if "content.xml" not in z.namelist(): raise ValueError("content.xml bulunamadı.")
+            xml=z.read("content.xml").decode("utf-8")
+            files={n:z.read(n) for n in z.namelist()}
+    except zipfile.BadZipFile: raise ValueError("Geçerli bir UDF dosyası seçin.")
     m=re.search(r"<content><!\[CDATA\[(.*?)\]\]></content>",xml,re.S)
-    if not m: raise ValueError("UDF content.xml okunamadı")
+    if not m: raise ValueError("UDF metin alanı okunamadı.")
     return xml,m.group(1),files
 
 def extract(text):
-    out={}
-    p=text.find("BAŞVURU SAHİBİ BİLGİLERİ"); q=text.find("KARŞI TARAF BİLGİLERİ")
-    for key,_ in FIELDS:
-        if key.startswith("basvurucu"): seg=text[p:q] if p>=0 and q>p else text
-        elif key.startswith("karsitaraf"): seg=text[q:] if q>=0 else text
-        else: seg=text
-        m=re.search(PAT[key],seg,re.I)
-        out[key]=m.group(1).strip() if m else ""
+    out={k:"" for k,_ in FIELDS}; p=text.find("BAŞVURU SAHİBİ BİLGİLERİ"); q=text.find("KARŞI TARAF BİLGİLERİ")
+    for k,_ in FIELDS:
+        seg=text[p:q] if k.startswith("basvurucu") and p>=0 and q>p else text[q:] if k.startswith("karsitaraf") and q>=0 else text
+        m=re.search(PAT[k],seg,re.I)
+        if m: out[k]=m.group(1).strip()
     return out
 
-def mapper(a,b):
+def make_mapper(a,b):
     sm=difflib.SequenceMatcher(a=a,b=b,autojunk=False); blocks=sm.get_matching_blocks()
     def mp(p):
         if p<=0:return 0
@@ -63,29 +51,28 @@ def mapper(a,b):
         for x in blocks:
             if x.a<=p<=x.a+x.size:return x.b+p-x.a
         prev=max((x for x in blocks if x.a<p),default=None,key=lambda x:x.a)
-        return (prev.b+min(p-prev.a,prev.size)) if prev else 0
+        return prev.b+min(p-prev.a,prev.size) if prev else 0
     return mp
 
-def rebuild(xml,a,b):
-    mp=mapper(a,b)
+def update_offsets(xml,a,b):
+    mp=make_mapper(a,b)
     def f(m):
-        s,l=int(m.group(1)),int(m.group(2)); ns=mp(s); ne=mp(s+l)
+        s,l=int(m.group(1)),int(m.group(2)); ns,ne=mp(s),mp(s+l)
         return f'startOffset="{ns}" length="{max(0,ne-ns)}"'
     return re.sub(r'startOffset="(\d+)"\s+length="(\d+)"',f,xml)
 
-def replace(text,key,val):
-    val=(val or "").strip()
+def replace_value(text,key,value):
+    value=(value or "").strip()
     if key.startswith("basvurucu"):
-        p=text.find("BAŞVURU SAHİBİ BİLGİLERİ"); q=text.find("KARŞI TARAF BİLGİLERİ"); s,e=max(p,0),q if q>p else len(text)
+        p=text.find("BAŞVURU SAHİBİ BİLGİLERİ"); q=text.find("KARŞI TARAF BİLGİLERİ"); s=max(p,0); e=q if q>p else len(text)
     elif key.startswith("karsitaraf"):
-        q=text.find("KARŞI TARAF BİLGİLERİ"); s,e=max(q,0),len(text)
+        q=text.find("KARŞI TARAF BİLGİLERİ"); s=max(q,0); e=len(text)
     else:s,e=0,len(text)
-    chunk=text[s:e]; m=re.search(PAT[key],chunk,re.I)
-    if not m:return text
-    return text[:s]+chunk[:m.start(1)]+val+chunk[m.end(1):]+text[e:]
+    seg=text[s:e]; m=re.search(PAT[key],seg,re.I)
+    return text if not m else text[:s]+seg[:m.start(1)]+value+seg[m.end(1):]+text[e:]
 
-def make(files,xml,a,b):
-    xml=rebuild(xml,a,b)
+def build_udf(files,xml,a,b):
+    xml=update_offsets(xml,a,b)
     xml=re.sub(r"(<content><!\[CDATA\[).*?(\]\]></content>)",lambda m:m.group(1)+b+m.group(2),xml,1,re.S)
     out=io.BytesIO()
     with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
@@ -94,23 +81,23 @@ def make(files,xml,a,b):
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
-    return templates.TemplateResponse("index.html",{"request":request})
+    return templates.TemplateResponse("index.html",{"request":request,"error":None})
 
 @app.post("/edit",response_class=HTMLResponse)
 async def edit(request:Request,file:UploadFile=File(...)):
     try:
-        data=await file.read(); xml,text,files=read(data); vals=extract(text)
-        return templates.TemplateResponse("editor.html",{"request":request,"filename":file.filename,"values":vals,"fields":FIELDS})
+        if not (file.filename or "").lower().endswith(".udf"): raise ValueError("Lütfen .udf dosyası seçin.")
+        _,text,_=read_udf(await file.read())
+        return templates.TemplateResponse("editor.html",{"request":request,"filename":file.filename,"values":extract(text)})
     except Exception as e:
         return templates.TemplateResponse("index.html",{"request":request,"error":str(e)})
 
 @app.post("/build")
 async def build(request:Request,file:UploadFile=File(...)):
-    data=await file.read(); xml,old,files=read(data); form=await request.form()
-    new=old
-    for key,_ in FIELDS:
-        if key in form:new=replace(new,key,str(form[key]))
-    result=make(files,xml,old,new)
+    if not (file.filename or "").lower().endswith(".udf"): return HTMLResponse("Lütfen .udf dosyası seçin.",400)
+    xml,old,files=read_udf(await file.read()); form=await request.form(); new=old
+    for k,_ in FIELDS:
+        if k in form: new=replace_value(new,k,str(form[k]))
+    result=build_udf(files,xml,old,new)
     name=Path(file.filename or "son_tutanak.udf").stem+"_duzenlenmis.udf"
-    return StreamingResponse(io.BytesIO(result),media_type="application/octet-stream",
-        headers={"Content-Disposition":f'attachment; filename="{name}"'})
+    return StreamingResponse(io.BytesIO(result),media_type="application/octet-stream",headers={"Content-Disposition":f'attachment; filename="{name}"'})
