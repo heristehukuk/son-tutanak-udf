@@ -2,10 +2,9 @@ import io,re,zipfile,difflib
 from pathlib import Path
 from fastapi import FastAPI,Request,UploadFile,File
 from fastapi.responses import HTMLResponse,StreamingResponse
-from fastapi.templating import Jinja2Templates
+from html import escape
 
 app=FastAPI(title="Son Tutanak UDF Düzenleyici")
-templates=Jinja2Templates(directory=str(Path(__file__).parent/"templates"))
 
 FIELDS=[('basvuruNo', 'Başvuru No'), ('dosyaNo', 'Dosya No'), ('arabulucuAdi', 'Arabulucu'), ('arabulucuTc', 'Arabulucu T.C. Kimlik No'), ('arabulucuSicil', 'Arabulucu Sicil No'), ('arabulucuAdres', 'Arabulucu Adres'), ('basvurucuTcKimlik', 'Başvurucu T.C. Kimlik No'), ('basvurucuAdiSoyadi', 'Başvurucu Adı Soyadı'), ('basvurucuAdres', 'Başvurucu Adres'), ('basvurucuVekili', 'Başvurucu Vekili'), ('basvurucuTelefon', 'Başvurucu Telefon'), ('basvurucuEposta', 'Başvurucu E-Posta'), ('karsitarafTcKimlik', 'Karşı Taraf T.C. Kimlik No'), ('karsitarafAdiSoyadi', 'Karşı Taraf Adı Soyadı'), ('karsitarafAdres', 'Karşı Taraf Adres'), ('karsitarafVekili', 'Karşı Taraf Vekili'), ('uyusmazlik', 'Uyuşmazlık Konusu'), ('baslangicTarihi', 'Süreç Başlangıç Tarihi'), ('bitisTarihi', 'Süreç Bitiş Tarihi'), ('duzenlemeYeri', 'Tutanak Düzenleme Yeri'), ('duzenlemeTarihi', 'Tutanak Düzenleme Tarihi'), ('sonuc', 'Sonuç')]
 PAT={
@@ -79,18 +78,86 @@ def build_udf(files,xml,a,b):
         for n,d in files.items(): z.writestr(n,xml.encode() if n=="content.xml" else d)
     return out.getvalue()
 
+
+def home_html(error=None):
+    err = f'<div class="err">{escape(str(error))}</div>' if error else ''
+    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Son Tutanak UDF Düzenleyici</title>
+<style>
+body{{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}}
+.box{{max-width:720px;margin:45px auto;background:#fff;padding:30px;border-radius:18px;box-shadow:0 5px 25px #0001}}
+input{{padding:12px;border:1px solid #ccd3db;border-radius:8px;width:100%;box-sizing:border-box}}
+button{{background:#1769e0;color:#fff;border:0;border-radius:9px;padding:14px 22px;font-weight:bold;cursor:pointer}}
+.err{{background:#fff0f0;color:#900;padding:12px;border-radius:8px;margin-top:15px}}
+</style></head><body><div class="box">
+<h1>Son Tutanak UDF Düzenleyici</h1>
+<p>UDF dosyanızı yükleyin; mevcut bilgiler otomatik olarak düzenleme ekranına getirilecektir.</p>
+<form action="/edit" method="post" enctype="multipart/form-data">
+<input type="file" name="file" accept=".udf" required><br><br>
+<button type="submit">Dosyayı Aç ve Analiz Et</button></form>{err}</div></body></html>"""
+
+def editor_html(filename, values):
+    def val(k): return escape(values.get(k, ''), quote=True)
+    def area(k): return escape(values.get(k, ''), quote=False)
+    labels = dict(FIELDS)
+    groups=[
+      ("Dosya Bilgileri",["basvuruNo","dosyaNo"]),
+      ("Arabulucu",["arabulucuAdi","arabulucuTc","arabulucuSicil","arabulucuAdres"]),
+      ("Başvurucu",["basvurucuTcKimlik","basvurucuAdiSoyadi","basvurucuAdres","basvurucuVekili","basvurucuTelefon","basvurucuEposta"]),
+      ("Karşı Taraf",["karsitarafTcKimlik","karsitarafAdiSoyadi","karsitarafAdres","karsitarafVekili"])
+    ]
+    cards=''
+    for title, keys in groups:
+        fields=''
+        for k in keys:
+            label=labels[k]
+            if "Adres" in label:
+                fields += f'<label>{escape(label)}</label><textarea name="{k}">{area(k)}</textarea>'
+            else:
+                fields += f'<label>{escape(label)}</label><input name="{k}" value="{val(k)}">'
+        cards += f'<div class="card"><h2>{escape(title)}</h2>{fields}</div>'
+    process=''
+    for k in ["uyusmazlik","baslangicTarihi","bitisTarihi","duzenlemeYeri","duzenlemeTarihi"]:
+        process += f'<label>{escape(labels[k])}</label><input name="{k}" value="{val(k)}">'
+    sonuc=values.get("sonuc","")
+    a_sel='selected' if sonuc=="Anlaşma" else ''
+    aa_sel='selected' if sonuc!="Anlaşma" else ''
+    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Düzenle</title>
+<style>
+*{{box-sizing:border-box}}body{{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}}
+.wrap{{max-width:1100px;margin:25px auto;padding:0 16px}}.grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}
+.card{{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}}
+label{{display:block;font-weight:bold;margin-top:12px}}input,textarea,select{{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}}
+textarea{{min-height:75px;resize:vertical}}button{{width:100%;background:#1769e0;color:#fff;border:0;border-radius:9px;padding:14px;font-weight:bold;margin-top:18px}}
+.hint{{color:#65717d;font-size:13px}}@media(max-width:800px){{.grid{{grid-template-columns:1fr}}}}
+</style></head><body><div class="wrap">
+<h1>Son Tutanak Düzenleyici</h1><p class="hint">{escape(filename)} — mevcut bilgiler otomatik getirildi.</p>
+<form action="/build" method="post" enctype="multipart/form-data">
+<div class="grid"><div>{cards}</div><div>
+<div class="card"><h2>Süreç ve Sonuç</h2>{process}
+<label>Arabuluculuk Sonucu</label>
+<select name="sonuc"><option value="Anlaşamama" {aa_sel}>Anlaşamama</option>
+<option value="Anlaşma" {a_sel}>Anlaşma</option></select></div>
+<div class="card"><h2>UDF Oluştur</h2><p class="hint">Orijinal UDF dosyasını tekrar seçin.</p>
+<input type="file" name="file" accept=".udf" required>
+<button type="submit">✓ Otomatik Düzenle ve UDF Oluştur</button>
+<p class="hint">UDF içindeki ofsetler yeniden hesaplanır. Elektronik imza üretilmez veya yenilenmez.</p>
+</div></div></div></form></div></body></html>"""
+
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
-    return templates.TemplateResponse("index.html",{"request":request,"error":None})
+    return HTMLResponse(home_html())
 
 @app.post("/edit",response_class=HTMLResponse)
 async def edit(request:Request,file:UploadFile=File(...)):
     try:
         if not (file.filename or "").lower().endswith(".udf"): raise ValueError("Lütfen .udf dosyası seçin.")
         _,text,_=read_udf(await file.read())
-        return templates.TemplateResponse("editor.html",{"request":request,"filename":file.filename,"values":extract(text)})
+        return HTMLResponse(editor_html(file.filename or "UDF", extract(text)))
     except Exception as e:
-        return templates.TemplateResponse("index.html",{"request":request,"error":str(e)})
+        return HTMLResponse(home_html(str(e)), status_code=400)
 
 @app.post("/build")
 async def build(request:Request,file:UploadFile=File(...)):
