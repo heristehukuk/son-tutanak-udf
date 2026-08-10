@@ -1,10 +1,9 @@
-# Son Tutanak UDF Web Uygulaması v4
+# Son Tutanak UDF Web v5
+Render Start Command:
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
-Kurulum:
+Build Command:
 pip install -r requirements.txt
-uvicorn app.main:app --reload
 
-Tarayıcı: http://127.0.0.1:8000
-
-UDF yükleme, otomatik alan okuma, düzenleme, Anlaşma/Anlaşamama seçimi ve yeniden UDF oluşturma.
-Elektronik imza üretmez/yenilemez.
+v5: Jinja2 şablon hatası giderildi; mobil arayüz, UDF doğrulama, otomatik alan doldurma, Anlaşma/Anlaşamama ve UDF oluşturma bulunur.
+Dosya boyutu kontrolü ve kalıcı dosya depolama eklenmemiştir.
