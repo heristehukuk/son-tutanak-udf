@@ -1,0 +1,20 @@
+<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Son Tutanak Düzenle</title>
+<style>
+body{font-family:Arial;background:#f2f5f8;margin:0}.wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}
+label{display:block;font-weight:bold;margin-top:12px}input,textarea,select{width:100%;box-sizing:border-box;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px}textarea{min-height:70px}
+button{background:#1769e0;color:#fff;border:0;border-radius:9px;padding:14px 22px;font-weight:bold;margin-top:18px}.hint{color:#65717d}
+@media(max-width:800px){.grid{grid-template-columns:1fr}}
+</style></head><body><div class="wrap">
+<h1>Son Tutanak Düzenleyici</h1><p class="hint">{{filename}} — mevcut bilgiler otomatik getirildi.</p>
+<form action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div><div class="card"><h2>Dosya Bilgileri</h2><label>Başvuru No</label><input name="basvuruNo" value="{{ values["basvuruNo"] }}"><label>Dosya No</label><input name="dosyaNo" value="{{ values["dosyaNo"] }}"></div><div class="card"><h2>Arabulucu</h2><label>Arabulucu</label><input name="arabulucuAdi" value="{{ values["arabulucuAdi"] }}"><label>Arabulucu T.C. Kimlik No</label><input name="arabulucuTc" value="{{ values["arabulucuTc"] }}"><label>Arabulucu Sicil No</label><input name="arabulucuSicil" value="{{ values["arabulucuSicil"] }}"><label>Arabulucu Adres</label><textarea name="arabulucuAdres">{{ values["arabulucuAdres"] }}</textarea></div><div class="card"><h2>Başvurucu</h2><label>Başvurucu T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{{ values["basvurucuTcKimlik"] }}"><label>Başvurucu Adı Soyadı</label><input name="basvurucuAdiSoyadi" value="{{ values["basvurucuAdiSoyadi"] }}"><label>Başvurucu Adres</label><textarea name="basvurucuAdres">{{ values["basvurucuAdres"] }}</textarea><label>Başvurucu Vekili</label><input name="basvurucuVekili" value="{{ values["basvurucuVekili"] }}"><label>Başvurucu Telefon</label><input name="basvurucuTelefon" value="{{ values["basvurucuTelefon"] }}"><label>Başvurucu E-Posta</label><input name="basvurucuEposta" value="{{ values["basvurucuEposta"] }}"></div><div class="card"><h2>Karşı Taraf</h2><label>Karşı Taraf T.C. Kimlik No</label><input name="karsitarafTcKimlik" value="{{ values["karsitarafTcKimlik"] }}"><label>Karşı Taraf Adı Soyadı</label><input name="karsitarafAdiSoyadi" value="{{ values["karsitarafAdiSoyadi"] }}"><label>Karşı Taraf Adres</label><textarea name="karsitarafAdres">{{ values["karsitarafAdres"] }}</textarea><label>Karşı Taraf Vekili</label><input name="karsitarafVekili" value="{{ values["karsitarafVekili"] }}"></div></div><div>
+<div class="card"><h2>Süreç ve Sonuç</h2><label>Uyuşmazlık Konusu</label><input name="uyusmazlik" value="{{ values["uyusmazlik"] }}"><label>Süreç Başlangıç Tarihi</label><input name="baslangicTarihi" value="{{ values["baslangicTarihi"] }}"><label>Süreç Bitiş Tarihi</label><input name="bitisTarihi" value="{{ values["bitisTarihi"] }}"><label>Tutanak Düzenleme Yeri</label><input name="duzenlemeYeri" value="{{ values["duzenlemeYeri"] }}"><label>Tutanak Düzenleme Tarihi</label><input name="duzenlemeTarihi" value="{{ values["duzenlemeTarihi"] }}"><label>Sonuç</label><select name="sonuc">
+<option value="Anlaşamama">Anlaşamama</option><option value="Anlaşma">Anlaşma</option></select>
+</div>
+<div class="card"><h2>UDF Oluştur</h2>
+<p class="hint">Orijinal UDF dosyasını seçin.</p>
+<input type="file" name="file" accept=".udf" required>
+<br><button>✓ Otomatik Düzenle ve UDF Oluştur</button>
+<p class="hint">UDF paketindeki diğer dosyalar korunur; XML ofsetleri yeniden hesaplanır.</p>
+</div></div></div></form></div></body></html>
