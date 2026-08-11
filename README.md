@@ -1,17 +1,18 @@
-# Son Tutanak UDF Asistanı v9
+# Son Tutanak UDF Asistanı v10
 
-Başvuru UDF'sinden bilgileri çıkarır, birden fazla belgeyi bilgi havuzunda birleştirir ve seçilen Son Tutanak/Anlaşma Belgesi UDF şablonuna aktarır.
+Bu sürüm UDF içindeki gerçek `<paragraph>` yapısını da günceller. Böylece birden fazla karşı taraf eklendiğinde satırlar UYAP Doküman Editörü'nde birbirine yapışmaz.
 
-v9 yenilikleri:
-- Birden fazla karşı taraf desteklenir.
-- Son tutanakta tek `KARŞI TARAF BİLGİLERİ` başlığı altında `Diğer Taraf 1`, `Diğer Taraf 2` ... ayrı bloklar oluşturulur.
-- Her tarafın kendi T.C./Vergi No, Adı Soyadı/Unvanı, Adres ve Vekili bilgileri ayrı tutulur.
-- Kişi/Kurum ayrımı yapılabilir. Kurumda kimlik alanı yerine Vergi No kullanılır.
-- Başvurucu da kişi veya kurum olabilir.
-- Tarafların imza bölümü dinamik oluşturulur.
-- Kilitlenen bilgiler sonraki belgelerle değiştirilmez.
-- Hazır Anlaşma, Anlaşmama ve Anlaşma Belgesi şablonları kullanılabilir.
-- Özel UDF şablonu da yüklenebilir.
+Özellikler:
+- Başvuru UDF'sinden bilgi çıkarma
+- Birden fazla belgeyi bilgi havuzunda birleştirme
+- Alanları ve tarafları sabitleme
+- Birden fazla karşı taraf
+- Kişi/kurum ayrımı ve T.C. Kimlik No/Vergi No
+- Üç hazır son tutanak şablonu
+- Özel UDF şablonu
+- Karşı taraf ve imza bölümlerinde gerçek UDF paragraf yapısının korunması
+- Başvurucu/arabulucu isimlerinin belge içindeki ilgili kullanımlarının güncellenmesi
 
-Dosya boyutu kontrolü ve kalıcı dosya depolama yoktur.
-Elektronik imza üretmez veya yenilemez.
+Render:
+Build: pip install -r requirements.txt
+Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT
