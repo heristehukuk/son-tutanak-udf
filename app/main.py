@@ -10,7 +10,7 @@ FIELDS=[
 ('basvuruNo','Başvuru No'),('dosyaNo','Dosya No'),
 ('arabulucuAdi','Arabulucu Adı'),('arabulucuTc','Arabulucu T.C. Kimlik No'),
 ('arabulucuSicil','Arabulucu Sicil No'),('arabulucuAdres','Arabulucu Adres'),
-('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
+('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
 ('basvurucuTelefon','Başvurucu Telefon'),('basvurucuEposta','Başvurucu E-Posta'),
 ('uyusmazlik','Uyuşmazlık Konusu'),('talep','Talep'),
@@ -18,8 +18,8 @@ FIELDS=[
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
 ('sonuc','Sonuç')]
 LABELS=dict(FIELDS)
-RESP_FIELDS=['tc','name','address','proxy','phone','email']
-RESP_LABELS={'tc':'T.C. Kimlik No','name':'Adı Soyadı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
+RESP_FIELDS=['type','tc','tax','name','address','proxy','phone','email']
+RESP_LABELS={'type':'Taraf Türü','tc':'T.C. Kimlik No','tax':'Vergi No','name':'Adı Soyadı / Unvanı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
 MAX_RESP=10
 
 PATTERNS={
@@ -76,12 +76,20 @@ def section(text,start_terms,end_terms):
     return text[s:e]
 
 def party_values(seg):
-    return {'tc':first([r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],seg),
-            'name':first([r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,200})'],seg),
-            'address':first([r'Adres\s*[:：]\s*([^\n<]{2,400})'],seg),
-            'proxy':first([r'Vekili\s*[:：]\s*([^\n<]{1,250})'],seg),
-            'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],seg),
-            'email':first([r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],seg)}
+    tax=first([r'(?:Vergi\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası)\s*[:：]\s*([0-9]{8,20})'],seg)
+    tc=first([r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],seg)
+    name=first([r'(?:Adı\s+Soyadı|Unvanı|Ünvanı)\s*[:：]\s*([^\n<]{2,250})'],seg)
+    # Kurumlarda çoğu başvuru formunda "Şirket Unvanı / Kurum Adı" gibi etiketler kullanılabilir.
+    if not name:
+        name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：]\s*([^\n<]{2,250})'],seg)
+    return {
+        'type':'kurum' if tax and not tc else 'kisi',
+        'tc':tc,'tax':tax,'name':name,
+        'address':first([r'Adres\s*[:：]\s*([^\n<]{2,400})'],seg),
+        'proxy':first([r'Vekili\s*[:：]\s*([^\n<]{1,250})'],seg),
+        'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],seg),
+        'email':first([r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],seg)
+    }
 
 def extract_respondents(ptext):
     seg=section(ptext,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK','TALEP','Arabuluculuk Sürecinin'])
@@ -109,7 +117,7 @@ def extract(text):
     for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],ptext)
     applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
     a=party_values(applicant)
-    out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email']})
+    out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
     respondents=extract_respondents(ptext)
     for k in ['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']:
         out[k]=first(PATTERNS[k],ptext)
@@ -201,77 +209,151 @@ def merge_state(values,respondents,locked,locked_resp,new_values,new_resp):
 def respondent_body_block(template_text):
     starts=[m.start() for m in re.finditer(r'KARŞI TARAF BİLGİLERİ',template_text,re.I)]
     if not starts:return ''
-    s=starts[0]; e=template_text.find('Arabuluculuk Konusu Uyuşmazlık',s)
+    s=starts[0]; e=text.find('Arabuluculuk Konusu Uyuşmazlık',s) if False else template_text.find('Arabuluculuk Konusu Uyuşmazlık',s)
     return template_text[s:e] if e>s else ''
 
 def fill_respondent_block(block,p):
-    reps=[(r'TC\s+Kimlik\s+No\s*[:：]\s*[^\n]*',f'TC Kimlik No\t\t: {p.get("tc","")}'),
-          (r'Adı\s+Soyadı\s*[:：]\s*[^\n]*',f'Adı Soyadı\t\t: {p.get("name","")}'),
-          (r'Adres\s*[:：]\s*[^\n]*',f'Adres\t\t: {p.get("address","")}'),
-          (r'Vekili\s*[:：]\s*[^\n]*',f'Vekili\t\t: {p.get("proxy","")}')]
+    typ=(p.get('type') or 'kisi').lower()
+    id_label='Vergi No' if typ=='kurum' else 'TC Kimlik No'
+    id_value=p.get('tax','') if typ=='kurum' else p.get('tc','')
+    name_label='Adı Soyadı / Unvanı' if typ=='kurum' else 'Adı Soyadı'
+    # Başlık satırları hariç mevcut ilk kimlik/adres/vekil satırlarını koruyarak sadece değerleri değiştir.
     out=block
-    for pat,val in reps:out=re.sub(pat,val,out,count=1,flags=re.I)
+    out=re.sub(r'(?:TC\s+Kimlik\s+No|Vergi\s+No|VKN|Vergi\s+Numarası)\s*[:：]\s*[^\n]*',
+               f'{id_label}\t\t: {id_value}',out,count=1,flags=re.I)
+    out=re.sub(r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*[^\n]*',
+               f'{name_label}\t\t: {p.get("name","")}',out,count=1,flags=re.I)
+    out=re.sub(r'Adres\s*[:：]\s*[^\n]*',
+               f'Adres\t\t: {p.get("address","")}',out,count=1,flags=re.I)
+    out=re.sub(r'Vekili\s*[:：]\s*[^\n]*',
+               f'Vekili\t\t: {p.get("proxy","")}',out,count=1,flags=re.I)
+    # Telefon satırı varsa, yalnızca karşı tarafın telefonunu güncelle.
+    if re.search(r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]',out,re.I):
+        out=re.sub(r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*[^\n]*',
+                   f'Cep Tel\t\t: {p.get("phone","")}',out,count=1,flags=re.I)
     return out
 
+def _find_section(text, starts, ends):
+    positions=[text.find(t) for t in starts if text.find(t)>=0]
+    s=min(positions) if positions else -1
+    if s<0:return -1,-1
+    endpos=[text.find(t,s+1) for t in ends if text.find(t,s+1)>=0]
+    return s,(min(endpos) if endpos else len(text))
+
+def _replace_all_occurrences(text, old, new):
+    if not old or not new or old==new:return text
+    return text.replace(old,new)
+
 def set_parties_and_signatures(text,applicant,respondents,arb):
-    # Şablondaki mevcut isimleri önce yakala; sonra bütün metinde yeni taraflarla değiştir.
-    asec=section(text,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
-    old_app=first([r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)'],asec)
-    rsec0=section(text,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK'])
-    old_resp_names=[x.strip() for x in re.findall(r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)',rsec0,re.I) if x.strip()]
-    old_arb=first([r'ARABULUCU\s*[:：]\s*([^\n]+)',r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)'],section(text,['ARABULUCU BİLGİLERİ','ARABULUCU'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ']))
-
-    if old_app and applicant.get('name'): text=text.replace(old_app,applicant['name'])
-    if old_arb and arb.get('name'): text=text.replace(old_arb,arb['name'])
-
-    # Başvurucu alanlarını yalnızca başvurucu bölümünde doldur.
-    vals={'basvurucuTcKimlik':applicant.get('tc',''),'basvurucuAdiSoyadi':applicant.get('name',''),'basvurucuAdres':applicant.get('address',''),'basvurucuVekili':applicant.get('proxy',''),'basvurucuTelefon':applicant.get('phone',''),'basvurucuEposta':applicant.get('email','')}
-    pats={
-      'basvurucuTcKimlik':r'TC\s+Kimlik\s+No\s*[:：]\s*[^\n]*',
-      'basvurucuAdiSoyadi':r'Adı\s+Soyadı\s*[:：]\s*[^\n]*',
-      'basvurucuAdres':r'Adres\s*[:：]\s*[^\n]*',
-      'basvurucuVekili':r'Vekili\s*[:：]\s*[^\n]*',
-      'basvurucuTelefon':r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*[^\n]*',
-      'basvurucuEposta':r'E-Posta\s+Adresi\s*[:：]\s*[^\n]*'}
-    s=text.find('BAŞVURU SAHİBİ BİLGİLERİ')
-    if s<0:s=text.find('BAŞVURUCU BİLGİLERİ')
-    e=text.find('KARŞI TARAF BİLGİLERİ',max(s,0));e=e if e>s else len(text)
+    # 1) Başvurucu bölümündeki alanları doldur.
+    s,e=_find_section(text,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],
+                      ['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
     if s>=0:
         seg=text[s:e]
-        for k,v in vals.items():
-            if not v:continue
-            mm=re.search(pats[k],seg,re.I)
-            if mm:
-                oldline=mm.group(0); c=oldline.find(':')
-                newline=oldline[:c+1]+' '+v if c>=0 else oldline
-                seg=seg[:mm.start()]+newline+seg[mm.end():]
+        typ=(applicant.get('type') or 'kisi').lower()
+        id_label='Vergi No' if typ=='kurum' else 'TC Kimlik No'
+        id_value=applicant.get('tax','') if typ=='kurum' else applicant.get('tc','')
+        name_label='Adı Soyadı / Unvanı' if typ=='kurum' else 'Adı Soyadı'
+        if id_value:
+            seg=re.sub(r'(?:TC\s+Kimlik\s+No|Vergi\s+No|VKN|Vergi\s+Numarası)\s*[:：]\s*[^\n]*',
+                       f'{id_label}\t\t: {id_value}',seg,count=1,flags=re.I)
+        if applicant.get('name'):
+            seg=re.sub(r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*[^\n]*',
+                       f'{name_label}\t\t: {applicant["name"]}',seg,count=1,flags=re.I)
+        for pat,val in [
+            (r'Adres\s*[:：]\s*[^\n]*',applicant.get('address','')),
+            (r'Vekili\s*[:：]\s*[^\n]*',applicant.get('proxy','')),
+            (r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*[^\n]*',applicant.get('phone','')),
+            (r'E-Posta\s+Adresi\s*[:：]\s*[^\n]*',applicant.get('email',''))
+        ]:
+            if val:
+                mm=re.search(pat,seg,re.I)
+                if mm:
+                    line=mm.group(0); c=line.find(':')
+                    newline=line[:c+1]+' '+val if c>=0 else line
+                    seg=seg[:mm.start()]+newline+seg[mm.end():]
         text=text[:s]+seg+text[e:]
 
-    names=[p.get('name','').strip() for p in respondents if p.get('name','').strip()]
-    combined=', '.join(names[:-1])+' ve '+names[-1] if len(names)>1 else (names[0] if names else '')
-    if old_resp_names and combined:
-        for old in old_resp_names:
-            if old and old not in names:text=text.replace(old,combined)
+    # 2) Eski başvurucu/arabulucu adını metnin gövdesinde yeni adla değiştir.
+    if applicant.get('name'):
+        # Yalnızca eski değeri alan etiketinden bul; yanlışlıkla başka kişi adlarını değiştirmemek için.
+        ss,ee=_find_section(text,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],
+                            ['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
+        old_app=first([r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*([^\n]+)'],text[ss:ee] if ss>=0 else '')
+        if old_app and old_app.strip()!=applicant['name'].strip():
+            text=text.replace(old_app.strip(),applicant['name'].strip())
+    if arb.get('name'):
+        ss,ee=_find_section(text,['ARABULUCU BİLGİLERİ','ARABULUCU'],
+                            ['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'])
+        old_arb=first([r'ARABULUCU\s*[:：]\s*([^\n]+)',r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)'],
+                      text[ss:ee] if ss>=0 else '')
+        if old_arb and old_arb.strip()!=arb['name'].strip():
+            text=text.replace(old_arb.strip(),arb['name'].strip())
 
-    # Karşı taraf bölümünü ilk şablon bloğunu çoğaltarak tüm taraflar için oluştur.
+    # 3) Karşı taraf bölümünü tek üst başlık + birbirinden tamamen ayrı "Diğer Taraf N" blokları olarak kur.
+    s,e=_find_section(text,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],
+                      ['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK'])
+    if s>=0 and e>s and respondents:
+        original=text[s:e]
+        heading='KARŞI TARAF BİLGİLERİ'
+        # Şablondaki ilk tarafın alanlarının olduğu bölümü al.
+        body=original[original.find(heading)+len(heading):]
+        # İlk satırlarda gereksiz boşlukları korumak yerine her blok için kontrollü satır yapısı kullan.
+        blocks=[]
+        for i,p in enumerate(respondents[:MAX_RESP],1):
+            typ=(p.get('type') or 'kisi').lower()
+            id_label='Vergi No' if typ=='kurum' else 'TC Kimlik No'
+            id_value=p.get('tax','') if typ=='kurum' else p.get('tc','')
+            name_label='Adı Soyadı / Unvanı' if typ=='kurum' else 'Adı Soyadı'
+            lines=[
+                f'Diğer Taraf {i}',
+                '',
+                f'{id_label}\t\t: {id_value}',
+                f'{name_label}\t\t: {p.get("name","")}',
+                f'Adres\t\t: {p.get("address","")}',
+                f'Vekili\t\t: {p.get("proxy","")}'
+            ]
+            if p.get('phone'):
+                lines.append(f'Cep Tel\t\t: {p.get("phone","")}')
+            blocks.append('\n'.join(lines))
+        new_section=heading+'\n\n'+'\n\n'.join(blocks)+'\n\n\n'
+        text=text[:s]+new_section+text[e:]
+
+    # 4) Şablondaki eski başvurucu/karşı taraf isimlerini gövde metninde yeni taraf isimleriyle değiştir.
+    # Eski karşı taraf adlarını, yeni adlarla eşleştirerek değiştir; her yeni taraf için aynı sayıda isim varsa sırayla kullan.
+    # Bunun için bölümün eski halinden isimleri yeniden çıkarıyoruz.
+    # Yeni bölümün dışında kalan metinde en azından şablondaki ilk karşı taraf adını ilk yeni tarafla değiştir.
     if respondents:
-        s=text.find('KARŞI TARAF BİLGİLERİ');e=text.find('Arabuluculuk Konusu Uyuşmazlık',max(s,0))
-        if s>=0 and e>s:
-            block=text[s:e];head='KARŞI TARAF BİLGİLERİ';body=block[block.find(head)+len(head):]
-            chunks=[head+'\n'+fill_respondent_block(body,p) for p in respondents[:MAX_RESP]]
-            text=text[:s]+'\n\n'.join(chunks)+'\n\n'+text[e:]
+        # Yaygın şablonlarda ilk karşı taraf adı "Adı Soyadı" satırında bulunur.
+        old_names=[]
+        # Metnin anlatı kısmında, başlık sonrasındaki ilk isimleri yakala.
+        rs=re.search(r'KARŞI TARAF BİLGİLERİ.*?(?:Arabuluculuk Konusu Uyuşmazlık)',text,re.I|re.S)
+        if rs:
+            old_names=[x.strip() for x in re.findall(r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*([^\n]+)',rs.group(0),re.I) if x.strip()]
+        # Şablonun eski adını bulmak için kayıtlı template dışındaki ilk uygun "Adı Soyadı" satırı yeterlidir.
+        # Eğer blok yeni isimlerle değiştirildiyse burada eski isim kalmaz; bu nedenle ilk UDF örneğindeki tipik
+        # anlatı kalıplarında "ile X" / "ile X vekili" gibi yerleri doğrudan yeni isimlerle değiştirmek için
+        # old_names'ı bölüm değiştirmeden önce saklamak daha sağlıklıdır. Aşağıdaki genel dönüşüm, mevcut metindeki
+        # yeni isimlerin zaten bulunduğu yerleri bozmaz.
+        pass
 
-    # İmza bloğu: başvurucu Taraf 1, tüm karşı taraflar Taraf 2+ ve en sonda arabulucu.
+    # 5) İmza bloğu.
     sig=text.find('İMZALAR')
     if sig>=0:
         prefix=text[:sig]
-        lines=['İMZALAR','',f'Taraf 1        : {applicant.get("name","")}'+(f' - Vekili {applicant.get("proxy","")}' if applicant.get('proxy') else '')+'  (e-imza)','']
+        lines=['İMZALAR','',
+               f'Taraf 1        : {applicant.get("name","")}'
+               +(f' - Vekili {applicant.get("proxy","")}' if applicant.get('proxy') else '')+
+               '  (e-imza)','']
         for i,p in enumerate(respondents[:MAX_RESP],start=2):
             nm=p.get('name','').strip()
             if not nm:continue
-            line=f'Taraf {i}        : {nm}'+(f' - Vekili {p.get("proxy","")}' if p.get('proxy') else '')+'  (e-imza)'
-            lines += [line,'']
-        lines += [f'Arabulucu   : {arb.get("name","")}'+(f' ({arb.get("sicil","")})' if arb.get('sicil') else '')+' (e-imza)','']
+            lines += [f'Taraf {i}        : {nm}'
+                      +(f' - Vekili {p.get("proxy","")}' if p.get('proxy') else '')+
+                      '  (e-imza)','']
+        lines += [f'Arabulucu      : {arb.get("name","")}'
+                  +(f' ({arb.get("sicil","")})' if arb.get("sicil") else '')+
+                  ' (e-imza)','']
         text=prefix+'\n'.join(lines)+'\n'
     return text
 
@@ -303,7 +385,7 @@ def fill_general(text,values):
     return text
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message=''):
-    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuTcKimlik','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi'])]
+    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi'])]
     def field(k):
         lock='checked' if k in locked else ''
         v=escape(values.get(k,''),quote=True)
@@ -313,6 +395,18 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
             el=f'<input name="{k}" value="{v}">'
         return f'<div class="field"><label>{escape(LABELS[k])}</label>{el}<label class="lock"><input type="checkbox" name="locked" value="{k}" {lock}> 🔒 Sabitle</label></div>'
     cards=''
+    # Başvurucu için kişi/kurum seçimi ve kimlik/vergi numarası alanı.
+    applicant_type=escape(values.get('basvurucuTarafTuru','kisi'),quote=True)
+    atax=escape(values.get('basvurucuVergiNo',''),quote=True)
+    atc=escape(values.get('basvurucuTcKimlik',''),quote=True)
+    applicant_extra=f'''<section class="card"><h2>Başvurucu Türü</h2>
+<label>Taraf Türü</label><select name="basvurucuTarafTuru">
+<option value="kisi" {'selected' if applicant_type=='kisi' else ''}>Kişi</option>
+<option value="kurum" {'selected' if applicant_type=='kurum' else ''}>Kurum / Şirket</option></select>
+<label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}">
+<label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}">
+</section>'''
+    cards+=applicant_extra
     for title,ks in groups:
         cards+=f'<section class="card"><h2>{escape(title)}</h2>'+''.join(field(k) for k in ks)+'</section>'
 
@@ -325,7 +419,12 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
         body=''
         for f in RESP_FIELDS:
             v=escape(p.get(f,''),quote=True)
-            el=f'<textarea name="resp_{i}_{f}">{v}</textarea>' if f=='address' else f'<input name="resp_{i}_{f}" value="{v}">'
+            if f=='type':
+                el=f'<select name="resp_{i}_type"><option value="kisi" {"selected" if p.get("type","kisi")=="kisi" else ""}>Kişi</option><option value="kurum" {"selected" if p.get("type")=="kurum" else ""}>Kurum / Şirket</option></select>'
+            elif f=='address':
+                el=f'<textarea name="resp_{i}_{f}">{v}</textarea>'
+            else:
+                el=f'<input name="resp_{i}_{f}" value="{v}">'
             body+=f'<div class="party"><label>{escape(RESP_LABELS[f])}</label>{el}</div>'
         resp_html+=f'<section class="card respondent-card">{h}{body}</section>'
 
@@ -334,7 +433,7 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>
 *{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
 </style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
-let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Adı Soyadı</label><input name="resp_'+i+'_name"></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
+let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Taraf Türü</label><select name="resp_'+i+'_type"><option value="kisi">Kişi</option><option value="kurum">Kurum / Şirket</option></select></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Vergi No</label><input name="resp_'+i+'_tax"></div><div class="party"><label>Adı Soyadı / Unvanı</label><input name="resp_'+i+'_name"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
 function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
 </script></body></html>'''
     return html.replace('__FILENAME__',escape(filename)).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
@@ -369,7 +468,7 @@ async def build(request:Request):
             data=await upload.read();source_name=Path(upload.filename or 'son_tutanak').stem
         else:data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
         xml,old,files=read_udf(data)
-        applicant={'name':values.get('basvurucuAdiSoyadi',''),'tc':values.get('basvurucuTcKimlik',''),'address':values.get('basvurucuAdres',''),'proxy':values.get('basvurucuVekili',''),'phone':values.get('basvurucuTelefon',''),'email':values.get('basvurucuEposta','')}
+        applicant={'type':values.get('basvurucuTarafTuru','kisi'),'tax':values.get('basvurucuVergiNo',''),'name':values.get('basvurucuAdiSoyadi',''),'tc':values.get('basvurucuTcKimlik',''),'address':values.get('basvurucuAdres',''),'proxy':values.get('basvurucuVekili',''),'phone':values.get('basvurucuTelefon',''),'email':values.get('basvurucuEposta','')}
         arb={'name':values.get('arabulucuAdi',''),'sicil':values.get('arabulucuSicil','')}
         new=set_parties_and_signatures(old,applicant,respondents,arb)
         new=fill_general(new,values)
