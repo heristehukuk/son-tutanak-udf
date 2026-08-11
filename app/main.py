@@ -13,7 +13,7 @@ FIELDS=[
 ('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
 ('basvurucuTelefon','Başvurucu Telefon'),('basvurucuEposta','Başvurucu E-Posta'),
-('uyusmazlik','Uyuşmazlık Konusu'),('talep','Talep'),
+('dosyaTuru','Dosya Türü'),('uyusmazlik','Uyuşmazlık Konusu'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
 ('sonuc','Sonuç')]
@@ -35,6 +35,7 @@ PATTERNS={
 'basvurucuVekili':[r'Vekili\s*[:：]\s*([^\n<]{1,250})'],
 'basvurucuTelefon':[r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],
 'basvurucuEposta':[r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],
+'dosyaTuru':[r'DOSYA\s*T[ÜU]R[ÜU]\s*[:：]\s*([^\n<]{2,300})'],
 'uyusmazlik':[r'Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*([^\n<]{2,500})',r'Uyuşmazlık\s*(?:Türü|Konusu)?\s*[:：]\s*([^\n<]{2,500})'],
 'talep':[r'Talep(?:ler)?\s*[:：]\s*([^\n<]{2,1000})',r'Talep\s+Konusu\s*[:：]\s*([^\n<]{2,1000})'],
 'baslangicTarihi':[r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
@@ -42,6 +43,13 @@ PATTERNS={
 'duzenlemeYeri':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]{2,120})'],
 'duzenlemeTarihi':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
 'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：]\s*([^\n<]{2,300})']}
+
+def normalize_dosya_turu(value):
+    value=re.sub(r"\s+", " ", (value or "").strip())
+    value=re.sub(r"\s*Başvuru\s+Dosyası\s*$", "", value, flags=re.I)
+    value=re.sub(r"\s*Başvuru\s*$", "", value, flags=re.I)
+    value=re.sub(r"\s*Dosyası\s*$", "", value, flags=re.I)
+    return value.strip(" :.-")
 
 def read_udf(data):
     try:
@@ -119,8 +127,11 @@ def extract(text):
     a=party_values(applicant)
     out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
     respondents=extract_respondents(ptext)
+    out['dosyaTuru']=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext))
     for k in ['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']:
         out[k]=first(PATTERNS[k],ptext)
+    if out['dosyaTuru']:
+        out['uyusmazlik']=out['dosyaTuru']
     return out,respondents
 
 def make_mapper(a,b):
@@ -150,8 +161,96 @@ def replace_once(text,patterns,value):
 def replace_labeled(text,label_patterns,value):
     return replace_once(text,label_patterns,value)
 
+
+
+def _paragraph_blocks(xml):
+    """Return paragraph XML blocks with their old text offsets."""
+    em=re.search(r'(<elements\b[^>]*>)(.*?)(</elements>)',xml,re.S)
+    if not em:return []
+    body=em.group(2); out=[]
+    for m in re.finditer(r'<paragraph\b[^>]*>.*?</paragraph>',body,re.S):
+        block=m.group(0)
+        pairs=[(int(a),int(b)) for a,b in re.findall(r'startOffset="(\d+)"\s+length="(\d+)"',block)]
+        if pairs:
+            out.append({'start':min(a for a,b in pairs),'end':max(a+b for a,b in pairs),'xml':block})
+    return out
+
+
+def _simple_paragraph(template, start, length):
+    """Clone paragraph formatting but replace its internal field structure with one text run."""
+    if not template:
+        return f'<paragraph><content startOffset="{start}" length="{length}" /></paragraph>'
+    op=re.match(r'<paragraph\b[^>]*>',template,re.S).group(0)
+    children=re.findall(r'<(?:content|field|space|tab)\b[^>]*/>',template,re.S)
+    attrs=''
+    if children:
+        raw=children[0]
+        raw=re.sub(r'\s+(?:startOffset|length)="\d+"','',raw)
+        raw=re.sub(r'^<(?:content|field|space|tab)\b','<content',raw)
+        raw=re.sub(r'\s*/>$','',raw)
+        attrs=raw[len('<content'):]
+    return op[:-1]+f'><content{attrs} startOffset="{start}" length="{length}" /></paragraph>'
+
+
+def rebuild_region_paragraphs(xml, old_text, new_text, start_term, end_term, line_kind='party'):
+    """Rebuild paragraph elements for a region whose text gained/changed paragraphs.
+    This is essential in UDF: inserting '\\n' in CDATA alone does not create paragraph elements.
+    """
+    os=old_text.find(start_term)
+    if os<0:return xml
+    oe_candidates=[old_text.find(end_term,os+len(start_term))] if end_term else []
+    oe=min([x for x in oe_candidates if x>=0] or [len(old_text)])
+    ns=new_text.find(start_term)
+    if ns<0:return xml
+    ne_candidates=[new_text.find(end_term,ns+len(start_term))] if end_term else []
+    ne=min([x for x in ne_candidates if x>=0] or [len(new_text)])
+
+    blocks=_paragraph_blocks(xml)
+    region=[b for b in blocks if b['start']>=ns and b['end']<=ne]
+    if not region:return xml
+    # Pick formatting templates from the old region.
+    def txt(b):return old_text[b['start']:b['end']]
+    heading_t=next((b['xml'] for b in region if 'KARŞI TARAF BİLGİLERİ' in txt(b)),region[0]['xml'])
+    blank_t=next((b['xml'] for b in region if txt(b).strip()==''),region[0]['xml'])
+    id_t=next((b['xml'] for b in region if re.search(r'(?:TC\s+Kimlik\s+No|Vergi\s+No)',txt(b),re.I)),region[-1]['xml'])
+    name_t=next((b['xml'] for b in region if re.search(r'Adı\s+Soyadı|Unvanı|Ünvanı',txt(b),re.I)),id_t)
+    addr_t=next((b['xml'] for b in region if re.search(r'^Adres\s*',txt(b),re.I)),id_t)
+    proxy_t=next((b['xml'] for b in region if re.search(r'^Vekili\s*',txt(b),re.I)),id_t)
+
+    new_region=new_text[ns:ne]
+    lines=new_region.splitlines(True)
+    if not lines:return xml
+    generated=[]; pos=ns
+    for line in lines:
+        ln=len(line); stripped=line.strip()
+        if not stripped: templ=blank_t
+        elif stripped=='KARŞI TARAF BİLGİLERİ': templ=heading_t
+        elif stripped.startswith('Diğer Taraf '): templ=id_t
+        elif re.match(r'(?:TC\s+Kimlik\s+No|Vergi\s+No)\s*[:：]',stripped,re.I): templ=id_t
+        elif re.match(r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı)\s*[:：]',stripped,re.I): templ=name_t
+        elif re.match(r'Adres\s*[:：]',stripped,re.I): templ=addr_t
+        elif re.match(r'Vekili\s*[:：]',stripped,re.I): templ=proxy_t
+        else: templ=id_t
+        generated.append(_simple_paragraph(templ,pos,ln)); pos+=ln
+    new_paras=''.join(generated)
+    em=re.search(r'(<elements\b[^>]*>)(.*?)(</elements>)',xml,re.S)
+    body=em.group(2)
+    # Replace exactly the old region's paragraph blocks while leaving non-paragraph elements intact.
+    first_start=region[0]['start']; last_end=region[-1]['end']
+    indices=[]
+    for m in re.finditer(r'<paragraph\b[^>]*>.*?</paragraph>',body,re.S):
+        block=m.group(0); pairs=[(int(a),int(b)) for a,b in re.findall(r'startOffset="(\d+)"\s+length="(\d+)"',block)]
+        if pairs:
+            bs=min(a for a,b in pairs); be=max(a+b for a,b in pairs)
+            if bs>=first_start and be<=last_end: indices.append((m.start(),m.end()))
+    if not indices:return xml
+    a,b=indices[0][0],indices[-1][1]
+    body2=body[:a]+new_paras+body[b:]
+    return xml[:em.start(2)]+body2+xml[em.end(2):]
+
 def build_udf(files,xml,old,new):
-    xml=update_offsets(xml,old,new)
+    # Offsetler build aşamasından önce güncellendi; burada tekrar güncelleme yapma.
+    # Aksi halde yeni oluşturulan paragraph offsetleri ikinci kez kayar.
     xml=re.sub(r'(<content><!\[CDATA\[).*?(\]\]></content>)',lambda m:m.group(1)+new+m.group(2),xml,1,re.S)
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
@@ -177,10 +276,17 @@ def standard_result(choice):return TEMPLATES.get(choice,('', '', ''))[2]
 
 def form_state(form):
     values={k:str(form.get(k,'')).strip() for k,_ in FIELDS}
+    values['dosyaTuru']=normalize_dosya_turu(values.get('dosyaTuru',''))
+    if values['dosyaTuru'] and not values.get('uyusmazlik'): values['uyusmazlik']=values['dosyaTuru']
+    # Taraf türü kullanıcıdan seçilmez: Vergi No varsa kurum, aksi halde T.C. varsa kişi.
+    values['basvurucuTarafTuru']=('kontrol' if values.get('basvurucuVergiNo') and values.get('basvurucuTcKimlik') else ('kurum' if values.get('basvurucuVergiNo') else 'kisi'))
     respondents=[]
     for i in range(MAX_RESP):
         p={f:str(form.get(f'resp_{i}_{f}','')).strip() for f in RESP_FIELDS}
-        if any(p.values()):respondents.append(p)
+        if p.get('tax') and p.get('tc'): p['type']='kontrol'
+        elif p.get('tax'): p['type']='kurum'
+        else: p['type']='kisi'
+        if any(v for k,v in p.items() if k!='type'):respondents.append(p)
     locked=set(str(x) for x in form.getlist('locked'))
     locked_resp=set(int(x) for x in form.getlist('locked_resp') if str(x).isdigit())
     return values,respondents,locked,locked_resp
@@ -195,6 +301,7 @@ def merge_state(values,respondents,locked,locked_resp,new_values,new_resp):
         if p.get('name'):
             for j,cur in enumerate(respondents):
                 if cur.get('name','').strip().casefold()==p['name'].strip().casefold():target=j;break
+        p['type']=('kontrol' if p.get('tax') and p.get('tc') else ('kurum' if p.get('tax') else 'kisi'))
         if target is None:
             for j,cur in enumerate(respondents):
                 if j not in locked_resp and not cur.get('name'):target=j;break
@@ -357,6 +464,26 @@ def set_parties_and_signatures(text,applicant,respondents,arb):
         text=prefix+'\n'.join(lines)+'\n'
     return text
 
+def replace_talep_in_narrative(text, talep):
+    """Şablondaki anlatım içindeki mevcut talep metnini, editördeki Talep alanıyla değiştirir."""
+    talep=(talep or '').strip().strip('"“”')
+    if not talep:
+        return text
+    # Son tutanak şablonlarında talep çoğunlukla tırnak içinde ve "talebi olduğunu beyan etmiştir" ile biter.
+    patterns=[
+        r'(["“”]{1,2})([^"“”\n]{5,3000})(["“”]{1,2})(\s+talebi\s+olduğunu\s+beyan\s+etmiştir)',
+        r'(["“”]{1,2})([^"“”\n]{5,3000})(["“”]{1,2})(\s+talebi\s+olduğunu)',
+    ]
+    for pat in patterns:
+        m=re.search(pat,text,re.I|re.S)
+        if m:
+            return text[:m.start(2)]+talep+text[m.end(2):]
+    # Açık bir Talep etiketi varsa onu da destekle.
+    m=re.search(r'(Talep(?:ler)?\s*[:：]\s*)([^\n]+)',text,re.I)
+    if m:
+        return text[:m.start(2)]+talep+text[m.end(2):]
+    return text
+
 def fill_general(text,values):
     # Şablonun etiketli alanlarını değiştir.
     patterns={
@@ -366,12 +493,13 @@ def fill_general(text,values):
     'arabulucuSicil':r'(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*[^\n]*',
     'arabulucuAdres':r'(?:ADRESİ|Adresi)\s*[:：]\s*[^\n]*',
     'uyusmazlik':r'Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*[^\n]*',
+    'talep':r'Talep(?:ler)?\s*[:：]\s*[^\n]*',
     'baslangicTarihi':r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*[^\n]*',
     'bitisTarihi':r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*[^\n]*',
     'duzenlemeYeri':r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*[^\n]*',
     'duzenlemeTarihi':r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*[^\n]*',
     'sonuc':r'Arabuluculuk\s+Sonucu\s*[:：]\s*[^\n]*'}
-    labels={'basvuruNo':'BAŞVURU NO','dosyaNo':'DOSYA  NO','arabulucuAdi':'ARABULUCU','arabulucuTc':'T.C KİMLİK NUMARASI','arabulucuSicil':'ARB. SİCİL NUMARASI','arabulucuAdres':'ADRESİ','uyusmazlik':'Arabuluculuk Konusu Uyuşmazlık','baslangicTarihi':'Arabuluculuk Sürecinin Başladığı Tarih','bitisTarihi':'Arabuluculuk Sürecinin Bittiği Tarih','duzenlemeYeri':'Son Tutanağın Düzenlendiği Yer','duzenlemeTarihi':'Son Tutanağın Düzenlendiği Tarih','sonuc':'Arabuluculuk Sonucu'}
+    labels={'basvuruNo':'BAŞVURU NO','dosyaNo':'DOSYA  NO','arabulucuAdi':'ARABULUCU','arabulucuTc':'T.C KİMLİK NUMARASI','arabulucuSicil':'ARB. SİCİL NUMARASI','arabulucuAdres':'ADRESİ','uyusmazlik':'Arabuluculuk Konusu Uyuşmazlık','talep':'Talep','baslangicTarihi':'Arabuluculuk Sürecinin Başladığı Tarih','bitisTarihi':'Arabuluculuk Sürecinin Bittiği Tarih','duzenlemeYeri':'Son Tutanağın Düzenlendiği Yer','duzenlemeTarihi':'Son Tutanağın Düzenlendiği Tarih','sonuc':'Arabuluculuk Sonucu'}
     for k,p in patterns.items():
         if not values.get(k):continue
         # First occurrence is generally the header field; for arabulucu ad we prefer explicit ARABULUCU line.
@@ -385,7 +513,7 @@ def fill_general(text,values):
     return text
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message=''):
-    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi'])]
+    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['dosyaTuru','uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi'])]
     def field(k):
         lock='checked' if k in locked else ''
         v=escape(values.get(k,''),quote=True)
@@ -395,16 +523,21 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
             el=f'<input name="{k}" value="{v}">'
         return f'<div class="field"><label>{escape(LABELS[k])}</label>{el}<label class="lock"><input type="checkbox" name="locked" value="{k}" {lock}> 🔒 Sabitle</label></div>'
     cards=''
-    # Başvurucu için kişi/kurum seçimi ve kimlik/vergi numarası alanı.
-    applicant_type=escape(values.get('basvurucuTarafTuru','kisi'),quote=True)
+    # Başvurucu türü otomatik belirlenir; kullanıcıdan ayrıca seçim istenmez.
     atax=escape(values.get('basvurucuVergiNo',''),quote=True)
     atc=escape(values.get('basvurucuTcKimlik',''),quote=True)
-    applicant_extra=f'''<section class="card"><h2>Başvurucu Türü</h2>
-<label>Taraf Türü</label><select name="basvurucuTarafTuru">
-<option value="kisi" {'selected' if applicant_type=='kisi' else ''}>Kişi</option>
-<option value="kurum" {'selected' if applicant_type=='kurum' else ''}>Kurum / Şirket</option></select>
+    if values.get('basvurucuVergiNo') and values.get('basvurucuTcKimlik'):
+        type_note='⚠️ T.C. Kimlik No ve Vergi No birlikte dolu; lütfen kontrol edin.'
+    elif values.get('basvurucuVergiNo'):
+        type_note='Firma / kurum olarak algılandı (Vergi No mevcut).'
+    elif values.get('basvurucuTcKimlik'):
+        type_note='Gerçek kişi olarak algılandı (T.C. Kimlik No mevcut).'
+    else:
+        type_note='Taraf türü numara bilgisine göre otomatik belirlenecek.'
+    applicant_extra=f'''<section class="card"><h2>Başvurucu Kimlik Bilgisi</h2>
 <label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}">
 <label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}">
+<p class="hint">{escape(type_note)}</p>
 </section>'''
     cards+=applicant_extra
     for title,ks in groups:
@@ -420,7 +553,11 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
         for f in RESP_FIELDS:
             v=escape(p.get(f,''),quote=True)
             if f=='type':
-                el=f'<select name="resp_{i}_type"><option value="kisi" {"selected" if p.get("type","kisi")=="kisi" else ""}>Kişi</option><option value="kurum" {"selected" if p.get("type")=="kurum" else ""}>Kurum / Şirket</option></select>'
+                if p.get('tax') and p.get('tc'): note='⚠️ T.C. Kimlik No ve Vergi No birlikte dolu; kontrol edin.'
+                elif p.get('tax'): note='Firma / kurum (Vergi No mevcut).'
+                elif p.get('tc'): note='Gerçek kişi (T.C. Kimlik No mevcut).'
+                else: note='Tür numara bilgisine göre otomatik belirlenecek.'
+                el=f'<p class="hint">{escape(note)}</p>'
             elif f=='address':
                 el=f'<textarea name="resp_{i}_{f}">{v}</textarea>'
             else:
@@ -468,14 +605,19 @@ async def build(request:Request):
             data=await upload.read();source_name=Path(upload.filename or 'son_tutanak').stem
         else:data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
         xml,old,files=read_udf(data)
-        applicant={'type':values.get('basvurucuTarafTuru','kisi'),'tax':values.get('basvurucuVergiNo',''),'name':values.get('basvurucuAdiSoyadi',''),'tc':values.get('basvurucuTcKimlik',''),'address':values.get('basvurucuAdres',''),'proxy':values.get('basvurucuVekili',''),'phone':values.get('basvurucuTelefon',''),'email':values.get('basvurucuEposta','')}
+        applicant={'type':('kontrol' if values.get('basvurucuVergiNo') and values.get('basvurucuTcKimlik') else ('kurum' if values.get('basvurucuVergiNo') else 'kisi')),'tax':values.get('basvurucuVergiNo',''),'name':values.get('basvurucuAdiSoyadi',''),'tc':values.get('basvurucuTcKimlik',''),'address':values.get('basvurucuAdres',''),'proxy':values.get('basvurucuVekili',''),'phone':values.get('basvurucuTelefon',''),'email':values.get('basvurucuEposta','')}
         arb={'name':values.get('arabulucuAdi',''),'sicil':values.get('arabulucuSicil','')}
         new=set_parties_and_signatures(old,applicant,respondents,arb)
+        # Kullanıcının editörde gördüğü son uyuşmazlık/talep değeri kaynak alınır.
         new=fill_general(new,values)
-        # Talep son tutanakta ayrı etiket yoksa, anlatı kısmındaki ilk uygun talep alanına eklemiyoruz; mevcut şablon metni korunur.
-        if values.get('talep') and 'Talep' in new:
-            # Şablonda açık Talep etiketi varsa değiştir.
-            new,_=replace_once(new,[r'Talep(?:ler)?\s*[:：]\s*[^\n]*'],values['talep'])
+        if values.get('talep'):
+            new=replace_talep_in_narrative(new,values['talep'])
+        # Önce mevcut paragraf/biçim offsetlerini eski metinden yeni metne taşı.
+        # Daha sonra yeni eklenen satırlar için gerçek <paragraph> öğeleri üret.
+        # Böylece UYAP Doküman Editörü eklenen tarafları tek satıra birleştirmez.
+        xml=update_offsets(xml,old,new)
+        xml=rebuild_region_paragraphs(xml,old,new,'KARŞI TARAF BİLGİLERİ','Arabuluculuk Konusu Uyuşmazlık')
+        xml=rebuild_region_paragraphs(xml,old,new,'İMZALAR',None)
         if new==old:return HTMLResponse('Şablonda değişiklik yapılamadı. Alanları kontrol edin.',400)
         result=build_udf(files,xml,old,new);label=TEMPLATES[choice][0] if choice in TEMPLATES else 'Özel Son Tutanak'
         name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+'_hazir.udf'
