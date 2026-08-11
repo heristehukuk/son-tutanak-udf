@@ -370,6 +370,33 @@ def _replace_all_occurrences(text, old, new):
     return text.replace(old,new)
 
 def set_parties_and_signatures(text,applicant,respondents,arb):
+    # v13: Şablondaki eski isimleri, herhangi bir alanı değiştirmeden ÖNCE yakala.
+    # Böylece anlatım metninde geçen Birsen SALMAN vb. isimler de yeni taraflarla değiştirilir.
+    old_names_map = {}
+    ss, ee = _find_section(text,
+        ['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],
+        ['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
+    if ss >= 0:
+        old_app_name = first([r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*([^\n]+)'], text[ss:ee])
+        if old_app_name:
+            old_names_map[old_app_name.strip()] = (applicant.get('name') or '').strip()
+    rs, re_ = _find_section(text,
+        ['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],
+        ['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK'])
+    if rs >= 0:
+        old_resp_names = re.findall(r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*([^\n]+)', text[rs:re_], re.I)
+        for old, newp in zip(old_resp_names, respondents):
+            old = old.strip()
+            new = (newp.get('name') or '').strip()
+            if old:
+                old_names_map[old] = new
+    old_arb_name = ''
+    as_, ae = _find_section(text,['ARABULUCU BİLGİLERİ','ARABULUCU'],
+                             ['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'])
+    if as_ >= 0:
+        old_arb_name = first([r'(?:ARABULUCU|Adı\s+Soyadı)\s*[:：]\s*([^\n]+)'], text[as_:ae]).strip()
+        if old_arb_name:
+            old_names_map[old_arb_name] = (arb.get('name') or '').strip()
     # 1) Başvurucu bölümündeki alanları doldur.
     s,e=_find_section(text,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],
                       ['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
@@ -490,6 +517,12 @@ def set_parties_and_signatures(text,applicant,respondents,arb):
                   +(f' ({arb.get("sicil","")})' if arb.get("sicil") else '')+
                   ' (e-imza)','']
         text=prefix+'\n'.join(lines)+'\n'
+    # v13: Belgenin anlatım bölümleri dahil olmak üzere eski isimleri yeni isimlerle değiştir.
+    # Uzun isimleri önce ele alıp regex callback kullanıyoruz; böylece bir değişiklik diğerini etkilemez.
+    replacements={k:v for k,v in old_names_map.items() if k and v and k != v}
+    if replacements:
+        pattern=re.compile('|'.join(re.escape(k) for k in sorted(replacements, key=len, reverse=True)))
+        text=pattern.sub(lambda m: replacements[m.group(0)], text)
     return text
 
 def replace_talep_in_narrative(text, talep):
