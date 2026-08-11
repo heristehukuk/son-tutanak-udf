@@ -1,4 +1,8 @@
 import io,re,zipfile,difflib
+from PIL import Image
+import pytesseract
+from pypdf import PdfReader
+from pdf2image import convert_from_bytes
 from pathlib import Path
 from html import escape
 from fastapi import FastAPI,Request,UploadFile,File
@@ -16,7 +20,7 @@ FIELDS=[
 ('dosyaTuru','Dosya Türü'),('uyusmazlik','Uyuşmazlık Konusu'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
-('sonuc','Sonuç')]
+('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi')]
 LABELS=dict(FIELDS)
 RESP_FIELDS=['type','tc','tax','name','address','proxy','phone','email']
 RESP_LABELS={'type':'Taraf Türü','tc':'T.C. Kimlik No','tax':'Vergi No','name':'Adı Soyadı / Unvanı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
@@ -50,6 +54,64 @@ def normalize_dosya_turu(value):
     value=re.sub(r"\s*Başvuru\s*$", "", value, flags=re.I)
     value=re.sub(r"\s*Dosyası\s*$", "", value, flags=re.I)
     return value.strip(" :.-")
+
+SUPPORTED_SOURCE_EXTS={'.jpg','.jpeg','.png','.pdf'}
+
+def clean_ocr_text(text):
+    text=text.replace('\x0c','\n')
+    text=re.sub(r'[ \t]+',' ',text)
+    text=re.sub(r'\n{3,}','\n\n',text)
+    return text.strip()
+
+def ocr_image_bytes(data):
+    img=Image.open(io.BytesIO(data))
+    # Upscale smaller screenshots for better OCR while keeping memory reasonable.
+    w,h=img.size
+    if w < 1800:
+        scale=min(2.5, 1800/max(w,1))
+        img=img.resize((int(w*scale),int(h*scale)), Image.Resampling.LANCZOS)
+    # Turkish language model; fall back to English if Turkish data is unavailable.
+    try:
+        txt=pytesseract.image_to_string(img, lang='tur+eng', config='--psm 6')
+    except Exception:
+        txt=pytesseract.image_to_string(img, lang='eng', config='--psm 6')
+    return clean_ocr_text(txt)
+
+def pdf_text_or_ocr(data):
+    text_parts=[]
+    try:
+        reader=PdfReader(io.BytesIO(data))
+        for page in reader.pages:
+            t=page.extract_text() or ''
+            if t.strip():
+                text_parts.append(t)
+    except Exception:
+        pass
+    text=clean_ocr_text('\n'.join(text_parts))
+    # If the PDF contains little/no selectable text, OCR every page.
+    if len(re.sub(r'\s','',text)) < 80:
+        pages=convert_from_bytes(data, dpi=220, fmt='png', thread_count=1)
+        ocr_parts=[]
+        for img in pages:
+            try:
+                t=pytesseract.image_to_string(img, lang='tur+eng', config='--psm 6')
+            except Exception:
+                t=pytesseract.image_to_string(img, lang='eng', config='--psm 6')
+            ocr_parts.append(t)
+        text=clean_ocr_text('\n'.join(ocr_parts))
+    return text
+
+def extract_source_text(filename,data):
+    ext=Path(filename or '').suffix.lower()
+    if ext=='.pdf':
+        return pdf_text_or_ocr(data)
+    if ext in {'.jpg','.jpeg','.png'}:
+        return ocr_image_bytes(data)
+    raise ValueError('Desteklenen kaynak formatları: UDF, PDF, JPG, JPEG ve PNG.')
+
+def is_udf_filename(filename):
+    return Path(filename or '').suffix.lower()=='.udf'
+
 
 def read_udf(data):
     try:
@@ -551,6 +613,57 @@ def replace_talep_in_narrative(text, talep):
         return text[:m.start(2)] + talep + text[m.end(2):]
     return text
 
+
+def build_meeting_sentence(values, applicant, respondents):
+    tarih=(values.get("gorusmeTarihi") or "").strip()
+    saat=(values.get("gorusmeSaati") or "").strip()
+    sekil=(values.get("gorusmeSekli") or "Telekonferans").strip().lower()
+    arb=(applicant.get("_arb_name") or "").strip()
+    parts=[]
+    an=applicant.get("name","").strip()
+    if an:
+        s=f"başvurucu {an}"
+        if applicant.get("proxy","").strip(): s+=f" vekili {applicant['proxy'].strip()}"
+        parts.append(s)
+    for p in respondents:
+        n=p.get("name","").strip()
+        if not n: continue
+        s=n
+        if p.get("proxy","").strip(): s+=f" vekili {p['proxy'].strip()}"
+        parts.append(s)
+    if len(parts)>=2: subject=parts[0]+" ile "+", ".join(parts[1:])
+    elif parts: subject=parts[0]
+    else: subject="taraflar"
+    date_phrase=""
+    if tarih and saat: date_phrase=f"{tarih} tarihinde saat {saat}'de"
+    elif tarih: date_phrase=f"{tarih} tarihinde"
+    elif saat: date_phrase=f"saat {saat}'de"
+    if sekil.startswith("yüz"):
+        addr=(values.get("gorusmeAdresi") or "").strip()
+        tail=f"{date_phrase} {addr} adresinde yüz yüze görüşme gerçekleştirdiler." if addr else f"{date_phrase} yüz yüze görüşme gerçekleştirdiler."
+    else:
+        tail=f"{date_phrase} telekonferans yöntemiyle görüşme gerçekleştirdiler."
+    return f"Arabulucu {arb} aracılığında; {subject} {tail}".strip()
+
+def replace_meeting_paragraph(text, sentence):
+    if not sentence: return text
+    pat=r"Arabulucu\s+.*?aracılığında;.*?görüşme\s+gerçekleştirdiler\."
+    m=re.search(pat,text,re.I|re.S)
+    return text[:m.start()]+sentence+text[m.end():] if m else text
+
+def final_legal_paragraph(values):
+    kind=" ".join([values.get("dosyaTuru", ""), values.get("uyusmazlik", "")]).lower()
+    if "iş" in kind or "işçilik" in kind or "iş hukuku" in kind:
+        return "İşbu arabuluculuk son tutanağı ÜÇ SAYFA olarak 6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanunu m. 17 ve 7036 sayılı İş Mahkemeleri Kanunu m. 3 uyarınca hep birlikte imza altına alındı."
+    if "ticari" in kind or "ticaret" in kind:
+        return "İşbu arabuluculuk son tutanağı ÜÇ SAYFA olarak 6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanunu m. 17, m. 18/A ve 6102 sayılı Türk Ticaret Kanunu m. 5/A uyarınca hep birlikte imza altına alındı."
+    if "tüketici" in kind:
+        return "İşbu arabuluculuk son tutanağı ÜÇ SAYFA olarak 6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanunu m. 17, m. 18/A ve 6502 sayılı Tüketicinin Korunması Hakkındaki Kanunun m. 73/A uyarınca hep birlikte imza altına alındı."
+    return "İşbu arabuluculuk son tutanağı ÜÇ SAYFA olarak 6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanunu m. 17, 18/B ve 7445 sayılı Kanunun m. 37 uyarınca imza altına alındı."
+
+def replace_final_legal_paragraph(text, values):
+    return re.sub(r"İşbu\s+arabuluculuk\s+son\s+tutanağı.*?imza\s+altına\s+alındı\.", final_legal_paragraph(values), text, count=1, flags=re.I|re.S)
+
 def fill_general(text,values):
     # Şablonun etiketli alanlarını değiştir.
     patterns={
@@ -580,11 +693,14 @@ def fill_general(text,values):
     return text
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message=''):
-    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['dosyaTuru','uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi'])]
+    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['dosyaTuru','uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi']),('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
     def field(k):
         lock='checked' if k in locked else ''
         v=escape(values.get(k,''),quote=True)
-        if k in ('arabulucuAdres','basvurucuAdres','uyusmazlik','talep'):
+        if k=='gorusmeSekli':
+            sel=(values.get(k) or 'Telekonferans').strip().lower()
+            el=f'<select name="{k}"><option value="Telekonferans" {"selected" if sel=="telekonferans" else ""}>Telekonferans</option><option value="Yüz yüze" {"selected" if sel.startswith("yüz") else ""}>Yüz yüze</option></select>'
+        elif k in ('arabulucuAdres','basvurucuAdres','uyusmazlik','talep','gorusmeAdresi'):
             el=f'<textarea name="{k}">{v}</textarea>'
         else:
             el=f'<input name="{k}" value="{v}">'
@@ -639,7 +755,7 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
 </style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
 let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Taraf Türü</label><select name="resp_'+i+'_type"><option value="kisi">Kişi</option><option value="kurum">Kurum / Şirket</option></select></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Vergi No</label><input name="resp_'+i+'_tax"></div><div class="party"><label>Adı Soyadı / Unvanı</label><input name="resp_'+i+'_name"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
 function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
-</script></body></html>'''
+function toggleMeeting(){const s=document.querySelector('select[name=gorusmeSekli]');const f=document.querySelector('textarea[name=gorusmeAdresi]');if(!s||!f)return;f.parentElement.style.display=s.value==='Yüz yüze'?'block':'none';}document.addEventListener('change',e=>{if(e.target.name==='gorusmeSekli')toggleMeeting()});document.addEventListener('DOMContentLoaded',toggleMeeting);</script></body></html>'''
     return html.replace('__FILENAME__',escape(filename)).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
 
 @app.get('/',response_class=HTMLResponse)
@@ -675,6 +791,9 @@ async def build(request:Request):
         applicant={'type':('kontrol' if values.get('basvurucuVergiNo') and values.get('basvurucuTcKimlik') else ('kurum' if values.get('basvurucuVergiNo') else 'kisi')),'tax':values.get('basvurucuVergiNo',''),'name':values.get('basvurucuAdiSoyadi',''),'tc':values.get('basvurucuTcKimlik',''),'address':values.get('basvurucuAdres',''),'proxy':values.get('basvurucuVekili',''),'phone':values.get('basvurucuTelefon',''),'email':values.get('basvurucuEposta','')}
         arb={'name':values.get('arabulucuAdi',''),'sicil':values.get('arabulucuSicil','')}
         new=set_parties_and_signatures(old,applicant,respondents,arb)
+        applicant['_arb_name']=arb.get('name','')
+        new=replace_meeting_paragraph(new, build_meeting_sentence(values, applicant, respondents))
+        new=replace_final_legal_paragraph(new, values)
         # Kullanıcının editörde gördüğü son uyuşmazlık/talep değeri kaynak alınır.
         new=fill_general(new,values)
         if values.get('talep'):
