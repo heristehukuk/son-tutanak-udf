@@ -181,6 +181,8 @@ def _simple_paragraph(template, start, length):
     if not template:
         return f'<paragraph><content startOffset="{start}" length="{length}" /></paragraph>'
     op=re.match(r'<paragraph\b[^>]*>',template,re.S).group(0)
+    # Adres satırları iki yana yaslanınca uzun adreslerde kelimeler arasına büyük boşluklar giriyor.
+    # Yeni oluşturulan tüm paragraflar içinde adres satırlarının şablon stilini aşağıda ayrıca sola çekeceğiz.
     children=re.findall(r'<(?:content|field|space|tab)\b[^>]*/>',template,re.S)
     attrs=''
     if children:
@@ -231,7 +233,10 @@ def rebuild_region_paragraphs(xml, old_text, new_text, start_term, end_term, lin
         elif re.match(r'Adres\s*[:：]',stripped,re.I): templ=addr_t
         elif re.match(r'Vekili\s*[:：]',stripped,re.I): templ=proxy_t
         else: templ=id_t
-        generated.append(_simple_paragraph(templ,pos,ln)); pos+=ln
+        pxml=_simple_paragraph(templ,pos,ln)
+        if re.match(r'Adres\s*[:：]', stripped, re.I):
+            pxml=re.sub(r'\sAlignment="[^"]*"', ' Alignment="0"', pxml, count=1)
+        generated.append(pxml); pos+=ln
     new_paras=''.join(generated)
     em=re.search(r'(<elements\b[^>]*>)(.*?)(</elements>)',xml,re.S)
     body=em.group(2)
@@ -248,10 +253,23 @@ def rebuild_region_paragraphs(xml, old_text, new_text, start_term, end_term, lin
     body2=body[:a]+new_paras+body[b:]
     return xml[:em.start(2)]+body2+xml[em.end(2):]
 
+def left_align_address_paragraphs(xml):
+    """Adres alanlarının paragraf hizasını sola çeker; uzun adreslerde kelime aralıklarının açılmasını önler."""
+    def repl(m):
+        block=m.group(0)
+        if re.search(r'fieldName="(?:basvurucuAdres|karsitarafAdres)"', block):
+            if re.search(r'\sAlignment="[^"]*"', block):
+                block=re.sub(r'\sAlignment="[^"]*"', ' Alignment="0"', block, count=1)
+            else:
+                block=block.replace('<paragraph ', '<paragraph Alignment="0" ', 1)
+        return block
+    return re.sub(r'<paragraph\b[^>]*>.*?</paragraph>', repl, xml, flags=re.S)
+
 def build_udf(files,xml,old,new):
     # Offsetler build aşamasından önce güncellendi; burada tekrar güncelleme yapma.
     # Aksi halde yeni oluşturulan paragraph offsetleri ikinci kez kayar.
     xml=re.sub(r'(<content><!\[CDATA\[).*?(\]\]></content>)',lambda m:m.group(1)+new+m.group(2),xml,1,re.S)
+    xml=left_align_address_paragraphs(xml)
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
         for n,d in files.items():
@@ -367,18 +385,28 @@ def set_parties_and_signatures(text,applicant,respondents,arb):
         if applicant.get('name'):
             seg=re.sub(r'(?:Adı\s+Soyadı|Adı\s+Soyadı\s*/\s*Unvanı|Unvanı|Ünvanı)\s*[:：]\s*[^\n]*',
                        f'{name_label}\t\t: {applicant["name"]}',seg,count=1,flags=re.I)
-        for pat,val in [
-            (r'Adres\s*[:：]\s*[^\n]*',applicant.get('address','')),
-            (r'Vekili\s*[:：]\s*[^\n]*',applicant.get('proxy','')),
-            (r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*[^\n]*',applicant.get('phone','')),
-            (r'E-Posta\s+Adresi\s*[:：]\s*[^\n]*',applicant.get('email',''))
-        ]:
+        # Telefonu özellikle 'Telefon Numarası' satırına yaz. Şablonda ayrıca
+        # 'Cep Tel' alanı bulunabiliyor; önce Telefon Numarası, yoksa Cep Tel kullanılır.
+        replacements=[
+            (r'Adres\s*[:：]\s*[^\n]*', applicant.get('address','')),
+            (r'Vekili\s*[:：]\s*[^\n]*', applicant.get('proxy','')),
+            (r'Telefon\s+Numarası\s*[:：]\s*[^\n]*', applicant.get('phone','')),
+            (r'E-Posta\s+Adresi\s*[:：]\s*[^\n]*', applicant.get('email',''))
+        ]
+        for pat,val in replacements:
             if val:
                 mm=re.search(pat,seg,re.I)
                 if mm:
                     line=mm.group(0); c=line.find(':')
                     newline=line[:c+1]+' '+val if c>=0 else line
                     seg=seg[:mm.start()]+newline+seg[mm.end():]
+        # Telefon Numarası satırı yoksa, Cep Tel satırını kullan; böylece değer kaybolmaz.
+        if applicant.get('phone') and not re.search(r'Telefon\s+Numarası\s*[:：]',seg,re.I):
+            mm=re.search(r'Cep\s*Tel\s*[:：]\s*[^\n]*',seg,re.I)
+            if mm:
+                line=mm.group(0); c=line.find(':')
+                newline=line[:c+1]+' '+applicant['phone'] if c>=0 else line
+                seg=seg[:mm.start()]+newline+seg[mm.end():]
         text=text[:s]+seg+text[e:]
 
     # 2) Eski başvurucu/arabulucu adını metnin gövdesinde yeni adla değiştir.
@@ -465,23 +493,29 @@ def set_parties_and_signatures(text,applicant,respondents,arb):
     return text
 
 def replace_talep_in_narrative(text, talep):
-    """Şablondaki anlatım içindeki mevcut talep metnini, editördeki Talep alanıyla değiştirir."""
+    """Editördeki Talep kutusunu, son tutanaktaki anlatımda yer alan mevcut talep metninin yerine koyar."""
     talep=(talep or '').strip().strip('"“”')
     if not talep:
         return text
-    # Son tutanak şablonlarında talep çoğunlukla tırnak içinde ve "talebi olduğunu beyan etmiştir" ile biter.
+
+    # Anlaşmama şablonundaki tipik yapı:
+    # "... Başvurucu ... arasında ... sözleşmesine konu [MEVCUT TALEP] hususunda talebi olduğunu ..."
+    # Burada tırnakların biçimi şablondan şablona değişebildiği için tırnağa bağımlı değiliz.
     patterns=[
-        r'(["“”]{1,2})([^"“”\n]{5,3000})(["“”]{1,2})(\s+talebi\s+olduğunu\s+beyan\s+etmiştir)',
-        r'(["“”]{1,2})([^"“”\n]{5,3000})(["“”]{1,2})(\s+talebi\s+olduğunu)',
+        r'(\bsözleşmesine\s+konu\s+)(.*?)(\s+hususunda\s+talebi\s+olduğunu\s+beyan\s+etmiştir)',
+        r'(\bkonu\s+)(.*?)(\s+hususunda\s+talebi\s+olduğunu\s+beyan\s+etmiştir)',
+        r'(\bkonu\s+)(.*?)(\s+talebi\s+olduğunu\s+beyan\s+etmiştir)',
     ]
     for pat in patterns:
         m=re.search(pat,text,re.I|re.S)
         if m:
-            return text[:m.start(2)]+talep+text[m.end(2):]
-    # Açık bir Talep etiketi varsa onu da destekle.
+            # Yeni talebin başına/sonuna tırnak eklemiyoruz.
+            return text[:m.start(2)] + talep + text[m.end(2):]
+
+    # Bazı şablonlarda talep doğrudan etiketli olabilir.
     m=re.search(r'(Talep(?:ler)?\s*[:：]\s*)([^\n]+)',text,re.I)
     if m:
-        return text[:m.start(2)]+talep+text[m.end(2):]
+        return text[:m.start(2)] + talep + text[m.end(2):]
     return text
 
 def fill_general(text,values):
