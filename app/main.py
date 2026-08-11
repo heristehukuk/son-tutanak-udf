@@ -173,6 +173,7 @@ def pattern_for(key):
       "karsitarafAdres":r"Adres\s*[:：]\s*([^\n<]*)",
       "karsitarafVekili":r"Vekili\s*[:：]\s*([^\n<]*)",
       "uyusmazlik":r"Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*([^\n<]*)",
+      "talep":r"(?:Talep(?:ler)?|Talep\s+Konusu)\s*[:：]\s*([^\n<]*)",
       "baslangicTarihi":r"Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*([^\n<]*)",
       "bitisTarihi":r"Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*([^\n<]*)",
       "duzenlemeYeri":r"Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]*)",
