@@ -4,7 +4,7 @@ from html import escape
 from fastapi import FastAPI,Request,UploadFile,File
 from fastapi.responses import HTMLResponse,StreamingResponse
 
-app=FastAPI(title="Son Tutanak UDF Düzenleyici")
+app=FastAPI(title="Son Tutanak UDF Asistanı")
 
 FIELDS=[
 ('basvuruNo','Başvuru No'),('dosyaNo','Dosya No'),
@@ -13,113 +13,110 @@ FIELDS=[
 ('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
 ('basvurucuTelefon','Başvurucu Telefon'),('basvurucuEposta','Başvurucu E-Posta'),
-('karsitarafTcKimlik','Karşı Taraf T.C. Kimlik No'),('karsitarafAdiSoyadi','Karşı Taraf Adı Soyadı'),
-('karsitarafAdres','Karşı Taraf Adres'),('karsitarafVekili','Karşı Taraf Vekili'),
 ('uyusmazlik','Uyuşmazlık Konusu'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
-('sonuc','Sonuç')
-]
+('sonuc','Sonuç')]
 LABELS=dict(FIELDS)
+RESP_FIELDS=['tc','name','address','proxy','phone','email']
+RESP_LABELS={'tc':'T.C. Kimlik No','name':'Adı Soyadı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
+MAX_RESP=10
+
+PATTERNS={
+'basvuruNo':[r'BAŞVURU\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Başvuru\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
+'dosyaNo':[r'DOSYA\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Dosya\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
+'arabulucuAdi':[r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})',r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})'],
+'arabulucuTc':[r'T\.?\s*C\.?\s*(?:KİMLİK\s+NUMARASI|Kimlik\s+No)\s*[:：]\s*(\d{8,20})'],
+'arabulucuSicil':[r'(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*([^\n<]{1,80})'],
+'arabulucuAdres':[r'(?:ARABULUCU\s+BİLGİLERİ.*?Adresi|ADRESİ|Adresi)\s*[:：]\s*([^\n<]{5,300})'],
+'basvurucuTcKimlik':[r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],
+'basvurucuAdiSoyadi':[r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,200})'],
+'basvurucuAdres':[r'Adres\s*[:：]\s*([^\n<]{2,400})'],
+'basvurucuVekili':[r'Vekili\s*[:：]\s*([^\n<]{1,250})'],
+'basvurucuTelefon':[r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],
+'basvurucuEposta':[r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],
+'uyusmazlik':[r'Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*([^\n<]{2,500})',r'Uyuşmazlık\s*(?:Türü|Konusu)?\s*[:：]\s*([^\n<]{2,500})'],
+'talep':[r'Talep(?:ler)?\s*[:：]\s*([^\n<]{2,1000})',r'Talep\s+Konusu\s*[:：]\s*([^\n<]{2,1000})'],
+'baslangicTarihi':[r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
+'bitisTarihi':[r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
+'duzenlemeYeri':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]{2,120})'],
+'duzenlemeTarihi':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
+'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：]\s*([^\n<]{2,300})']}
 
 def read_udf(data):
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            if "content.xml" not in z.namelist(): raise ValueError("content.xml bulunamadı.")
-            xml=z.read("content.xml").decode("utf-8")
-            files={n:z.read(n) for n in z.namelist()}
-    except zipfile.BadZipFile:
-        raise ValueError("Geçerli bir UDF dosyası seçin.")
-    m=re.search(r"<content><!\[CDATA\[(.*?)\]\]></content>",xml,re.S)
-    if not m: raise ValueError("UDF metin alanı okunamadı.")
+            if 'content.xml' not in z.namelist(): raise ValueError('content.xml bulunamadı.')
+            xml=z.read('content.xml').decode('utf-8'); files={n:z.read(n) for n in z.namelist()}
+    except zipfile.BadZipFile: raise ValueError('Geçerli bir UDF dosyası seçin.')
+    m=re.search(r'<content><!\[CDATA\[(.*?)\]\]></content>',xml,re.S)
+    if not m: raise ValueError('UDF metin alanı okunamadı.')
     return xml,m.group(1),files
 
 def udf_plain(text):
-    # Etiketleri kaldırırken satır sonlarını koru; UDF alanları çoğunlukla satır tabanlıdır.
-    s=re.sub(r"<[^>]+>","",text)
-    lines=[]
+    s=re.sub(r'<[^>]+>','',text); lines=[]
     for line in s.splitlines():
-        line=re.sub(r"[ \t]+"," ",line).strip()
-        if line:
-            lines.append(line)
-    return "\n".join(lines)
+        line=re.sub(r'[ \t]+',' ',line).strip()
+        if line: lines.append(line)
+    return '\n'.join(lines)
 
-def first(patterns, text, flags=re.I):
+def first(patterns,text,flags=re.I):
     for p in patterns:
         m=re.search(p,text,flags)
         if m:
-            v=m.group(1).strip(" \t\r\n:;,-")
-            if v: return v
-    return ""
+            v=m.group(1).strip(' \t\r\n:;,-')
+            if v:return v
+    return ''
+
+def section(text,start_terms,end_terms):
+    positions=[text.find(t) for t in start_terms if text.find(t)>=0]
+    s=min(positions) if positions else 0
+    ends=[text.find(t,s+1) for t in end_terms]
+    e=min([x for x in ends if x>=0] or [len(text)])
+    return text[s:e]
+
+def party_values(seg):
+    return {'tc':first([r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],seg),
+            'name':first([r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,200})'],seg),
+            'address':first([r'Adres\s*[:：]\s*([^\n<]{2,400})'],seg),
+            'proxy':first([r'Vekili\s*[:：]\s*([^\n<]{1,250})'],seg),
+            'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],seg),
+            'email':first([r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],seg)}
+
+def extract_respondents(ptext):
+    seg=section(ptext,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK','TALEP','Arabuluculuk Sürecinin'])
+    # İlk yöntem: tekrar eden "Adı Soyadı" etiketlerine göre bloklara ayır.
+    matches=list(re.finditer(r'Adı\s+Soyadı\s*[:：]',seg,re.I))
+    parties=[]
+    for i,m in enumerate(matches[:MAX_RESP]):
+        starts=[seg.rfind('\nTC Kimlik No',0,m.start()),seg.rfind('\nVergi No',0,m.start()),seg.rfind('\nAdı Soyadı',0,m.start())]
+        a=max([x for x in starts if x>=0] or [max(0,seg.rfind('\n',0,m.start()))])
+        b=matches[i+1].start() if i+1<len(matches) else len(seg)
+        chunk=seg[a:b]
+        pv=party_values(chunk)
+        if pv['name']:
+            parties.append(pv)
+    if parties:return parties
+    # Tek blok için yedek yöntem.
+    pv=party_values(seg)
+    return [pv] if pv['name'] else []
 
 def extract(text):
-    ptext=udf_plain(text)
-    out={k:"" for k,_ in FIELDS}
-
-    out["basvuruNo"]=first([
-        r"BAŞVURU\s*NO\s*[:：]\s*([^\n<]{1,100})",
-        r"Başvuru\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})"],ptext)
-    out["dosyaNo"]=first([r"DOSYA\s*NO\s*[:：]\s*([^\n<]{1,100})",r"Dosya\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})"],ptext)
-
-    # Bölümleri sınırlayarak başvurucu/karşı taraf ayrımı yap
-    def section(start_terms,end_terms):
-        s=min([ptext.find(t) for t in start_terms if ptext.find(t)>=0] or [0])
-        ends=[ptext.find(t,s+1) for t in end_terms]
-        e=min([x for x in ends if x>=0] or [len(ptext)])
-        return ptext[s:e]
-
-    # Arabulucu: iki yaygın biçim
-    arbsec=section(["ARABULUCU BİLGİLERİ","ARABULUCU"],["BAŞVURU SAHİBİ BİLGİLERİ","BAŞVURUCU BİLGİLERİ","BAŞVURU SAHİBİ"])
-    out["arabulucuAdi"]=first([
-        r"Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})",
-        r"ARABULUCU\s*[:：]\s*([^\n<]{2,150})"],arbsec)
-    if not out["arabulucuAdi"]:
-        out["arabulucuAdi"]=first([r"ARABULUCU\s*[:：]\s*([^\n<]{2,150})"],ptext)
-    out["arabulucuTc"]=first([
-        r"T\.?\s*C\.?\s*(?:KİMLİK\s+NUMARASI|Kimlik\s+No)\s*[:：]\s*(\d{8,20})"],ptext)
-    out["arabulucuSicil"]=first([
-        r"(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*([^\n<]{1,80})"],ptext)
-    out["arabulucuAdres"]=first([
-        r"ARABULUCU\s+BİLGİLERİ.*?Adresi\s*[:：]\s*([^\n<]{5,300})",
-        r"ADRESİ\s*[:：]\s*([^\n<]{5,300})"],ptext)
-
-    applicant=section(["BAŞVURU SAHİBİ BİLGİLERİ","BAŞVURUCU BİLGİLERİ","BAŞVURUCU"],["KARŞI TARAF BİLGİLERİ","KARŞI TARAF"])
-    respondent=section(["KARŞI TARAF BİLGİLERİ","KARŞI TARAF"],["Arabuluculuk Konusu Uyuşmazlık","UYUŞMAZLIK","TALEP","Arabuluculuk Sürecinin"])
-
-    def party_values(seg):
-        return {
-            "tc":first([r"TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})"],seg),
-            "name":first([r"Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,200})"],seg),
-            "address":first([r"Adres\s*[:：]\s*([^\n<]{2,400})"],seg),
-            "proxy":first([r"Vekili\s*[:：]\s*([^\n<]{1,250})"],seg),
-            "phone":first([r"(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})"],seg),
-            "email":first([r"E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})"],seg)
-        }
-    a=party_values(applicant); r=party_values(respondent)
-    out.update({
-        "basvurucuTcKimlik":a["tc"],"basvurucuAdiSoyadi":a["name"],"basvurucuAdres":a["address"],
-        "basvurucuVekili":a["proxy"],"basvurucuTelefon":a["phone"],"basvurucuEposta":a["email"],
-        "karsitarafTcKimlik":r["tc"],"karsitarafAdiSoyadi":r["name"],"karsitarafAdres":r["address"],
-        "karsitarafVekili":r["proxy"]
-    })
-
-    out["uyusmazlik"]=first([
-        r"Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*([^\n<]{2,500})",
-        r"Uyuşmazlık\s*(?:Türü|Konusu)?\s*[:：]\s*([^\n<]{2,500})",
-        r"Uyuşmazlık\s+Türü\s*[:：]\s*([^\n<]{2,500})"],ptext)
-    out["talep"]=first([
-        r"Talep(?:ler)?\s*[:：]\s*([^\n<]{2,1000})",
-        r"Talep\s+Konusu\s*[:：]\s*([^\n<]{2,1000})"],ptext)
-    out["baslangicTarihi"]=first([r"Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*([^\n<]{2,80})"],ptext)
-    out["bitisTarihi"]=first([r"Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})"],ptext)
-    out["duzenlemeYeri"]=first([r"Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]{2,120})"],ptext)
-    out["duzenlemeTarihi"]=first([r"Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})"],ptext)
-    out["sonuc"]=first([r"Arabuluculuk\s+Sonucu\s*[:：]\s*([^\n<]{2,300})"],ptext)
-    return out
+    ptext=udf_plain(text); out={k:'' for k,_ in FIELDS}
+    for k in ['basvuruNo','dosyaNo']: out[k]=first(PATTERNS[k],ptext)
+    arbsec=section(ptext,['ARABULUCU BİLGİLERİ','ARABULUCU'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
+    out['arabulucuAdi']=first([r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})',r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],arbsec) or first([r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],ptext)
+    for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],ptext)
+    applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
+    a=party_values(applicant)
+    out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email']})
+    respondents=extract_respondents(ptext)
+    for k in ['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']:
+        out[k]=first(PATTERNS[k],ptext)
+    return out,respondents
 
 def make_mapper(a,b):
-    sm=difflib.SequenceMatcher(a=a,b=b,autojunk=False)
-    blocks=sm.get_matching_blocks()
+    sm=difflib.SequenceMatcher(a=a,b=b,autojunk=False); blocks=sm.get_matching_blocks()
     def mp(p):
         if p<=0:return 0
         if p>=len(a):return len(b)
@@ -132,193 +129,256 @@ def make_mapper(a,b):
 def update_offsets(xml,a,b):
     mp=make_mapper(a,b)
     def f(m):
-        s,l=int(m.group(1)),int(m.group(2))
-        ns,ne=mp(s),mp(s+l)
+        s,l=int(m.group(1)),int(m.group(2)); ns,ne=mp(s),mp(s+l)
         return f'startOffset="{ns}" length="{max(0,ne-ns)}"'
     return re.sub(r'startOffset="(\d+)"\s+length="(\d+)"',f,xml)
 
-def section_bounds(text,key):
-    if key.startswith("basvurucu"):
-        p=text.find("BAŞVURU SAHİBİ BİLGİLERİ")
-        if p<0:p=text.find("BAŞVURUCU BİLGİLERİ")
-        q=text.find("KARŞI TARAF BİLGİLERİ",max(p,0))
-        return max(p,0), q if q>p else len(text)
-    if key.startswith("karsitaraf"):
-        q=text.find("KARŞI TARAF BİLGİLERİ")
-        if q<0:q=text.find("KARŞI TARAF")
-        e=min([x for x in [text.find("Arabuluculuk Konusu Uyuşmazlık",max(q,0)),text.find("Arabuluculuk Sürecinin",max(q,0))] if x>=0] or [len(text)])
-        return max(q,0),e
-    if key.startswith("arabulucu"):
-        p=min([x for x in [text.find("ARABULUCU BİLGİLERİ"),text.find("ARABULUCU :")] if x>=0] or [0])
-        e=min([x for x in [text.find("BAŞVURU SAHİBİ BİLGİLERİ",p),text.find("BAŞVURUCU BİLGİLERİ",p),text.find("BAŞVURU SAHİBİ",p)] if x>=0] or [len(text)])
-        return p,e
-    return 0,len(text)
+def replace_once(text,patterns,value):
+    for p in patterns:
+        m=re.search(p,text,re.I)
+        if m:return text[:m.start(1)]+value+text[m.end(1):],True
+    return text,False
 
-def pattern_for(key):
-    return {
-      "basvuruNo":r"BAŞVURU\s*NO\s*[:：]\s*([^\n<]*)",
-      "dosyaNo":r"DOSYA\s*NO\s*[:：]\s*([^\n<]*)",
-      "arabulucuAdi":r"(?:ARABULUCU\s*[:：]|Adı\s+Soyadı\s*[:：])\s*([^\n<]*)",
-      "arabulucuTc":r"(?:T\.?\s*C\.?\s*KİMLİK\s+NUMARASI|TC\s+Kimlik\s+No)\s*[:：]\s*(\d{8,20})",
-      "arabulucuSicil":r"(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*([^\n<]*)",
-      "arabulucuAdres":r"(?:ADRESİ|Adresi)\s*[:：]\s*([^\n<]*)",
-      "basvurucuTcKimlik":r"TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})",
-      "basvurucuAdiSoyadi":r"Adı\s+Soyadı\s*[:：]\s*([^\n<]*)",
-      "basvurucuAdres":r"Adres\s*[:：]\s*([^\n<]*)",
-      "basvurucuVekili":r"Vekili\s*[:：]\s*([^\n<]*)",
-      "basvurucuTelefon":r"(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]*)",
-      "basvurucuEposta":r"E-Posta\s+Adresi\s*[:：]\s*([^\n<]*)",
-      "karsitarafTcKimlik":r"TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})",
-      "karsitarafAdiSoyadi":r"Adı\s+Soyadı\s*[:：]\s*([^\n<]*)",
-      "karsitarafAdres":r"Adres\s*[:：]\s*([^\n<]*)",
-      "karsitarafVekili":r"Vekili\s*[:：]\s*([^\n<]*)",
-      "uyusmazlik":r"Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*([^\n<]*)",
-      "talep":r"(?:Talep(?:ler)?|Talep\s+Konusu)\s*[:：]\s*([^\n<]*)",
-      "baslangicTarihi":r"Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*([^\n<]*)",
-      "bitisTarihi":r"Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*([^\n<]*)",
-      "duzenlemeYeri":r"Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]*)",
-      "duzenlemeTarihi":r"Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*([^\n<]*)",
-      "sonuc":r"Arabuluculuk\s+Sonucu\s*[:：]\s*([^\n<]*)"
-    }[key]
-
-def replace_value(text,key,value):
-    value=(value or "").strip()
-    s,e=section_bounds(text,key)
-    seg=text[s:e]
-    m=re.search(pattern_for(key),seg,re.I)
-    if not m:return text,False
-    new=text[:s]+seg[:m.start(1)]+value+seg[m.end(1):]+text[e:]
-    return new,True
+def replace_labeled(text,label_patterns,value):
+    return replace_once(text,label_patterns,value)
 
 def build_udf(files,xml,old,new):
     xml=update_offsets(xml,old,new)
-    xml=re.sub(r"(<content><!\[CDATA\[).*?(\]\]></content>)",
-               lambda m:m.group(1)+new+m.group(2),xml,1,re.S)
+    xml=re.sub(r'(<content><!\[CDATA\[).*?(\]\]></content>)',lambda m:m.group(1)+new+m.group(2),xml,1,re.S)
     out=io.BytesIO()
-    with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
         for n,d in files.items():
-            # Yeni belgeye eski elektronik imza dosyasını taşımıyoruz.
-            if n=="sign.sgn": continue
-            z.writestr(n,xml.encode("utf-8") if n=="content.xml" else d)
+            if n=='sign.sgn':continue
+            z.writestr(n,xml.encode('utf-8') if n=='content.xml' else d)
     return out.getvalue()
 
 TEMPLATES={
- "anlasma_son_tutanagi":("Anlaşma Son Tutanağı","anlasma_son_tutanagi.udf","ANLAŞMA"),
- "anlasmama_son_tutanagi":("Anlaşmama Son Tutanağı","anlasmama_son_tutanagi.udf","ANLAŞMAMA"),
- "anlasma_belgesi":("Anlaşma Tutanağı (Anlaşma Belgesi)","anlasma_belgesi.udf","ANLAŞMA BELGESİ")
-}
-TEMPLATE_DIR=Path(__file__).parent/"templates"/"udf"
+ 'anlasma_son_tutanagi':('Anlaşma Son Tutanağı','anlasma_son_tutanagi.udf','ANLAŞMA'),
+ 'anlasmama_son_tutanagi':('Anlaşmama Son Tutanağı','anlasmama_son_tutanagi.udf','ANLAŞMAMA'),
+ 'anlasma_belgesi':('Anlaşma Tutanağı (Anlaşma Belgesi)','anlasma_belgesi.udf','ANLAŞMA BELGESİ')}
+TEMPLATE_DIR=Path(__file__).parent/'templates'/'udf'
 
 def template_bytes(choice):
-    if choice=="custom": return None
-    if choice not in TEMPLATES: raise ValueError("Geçersiz şablon seçimi.")
+    if choice=='custom':return None
+    if choice not in TEMPLATES:raise ValueError('Geçersiz şablon seçimi.')
     p=TEMPLATE_DIR/TEMPLATES[choice][1]
-    if not p.exists(): raise ValueError("Seçilen hazır şablon sunucuda bulunamadı.")
+    if not p.exists():raise ValueError('Seçilen hazır şablon sunucuda bulunamadı.')
     return p.read_bytes()
 
-def standard_result(choice):
-    return TEMPLATES.get(choice,("", "", ""))[2]
+def standard_result(choice):return TEMPLATES.get(choice,('', '', ''))[2]
 
-def home_html(error=None):
-    err=f'<div class="err">{escape(str(error))}</div>' if error else ""
-    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Son Tutanak UDF Asistanı</title><style>
-body{{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}}.box{{max-width:760px;margin:45px auto;background:#fff;padding:32px;border-radius:18px;box-shadow:0 5px 25px #0001}}input{{padding:12px;border:1px solid #ccd3db;border-radius:8px;width:100%;box-sizing:border-box}}button{{background:#1769e0;color:#fff;border:0;border-radius:9px;padding:14px 22px;font-weight:bold;cursor:pointer;width:100%}}.hint{{color:#65717d;font-size:14px}}.err{{background:#fff0f0;color:#900;padding:12px;border-radius:8px;margin-top:15px}}
-</style></head><body><div class="box"><h1>Son Tutanak UDF Asistanı</h1>
-<p>Başvuru Formu UDF dosyasını yükleyin. Uygulama bulabildiği bilgileri çıkarır; siz kontrol edip eksikleri tamamlayabilirsiniz.</p>
-<form action="/edit" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".udf" required><br><br>
-<button type="submit">Başvuru Formunu Analiz Et</button></form>{err}</div></body></html>"""
+def form_state(form):
+    values={k:str(form.get(k,'')).strip() for k,_ in FIELDS}
+    respondents=[]
+    for i in range(MAX_RESP):
+        p={f:str(form.get(f'resp_{i}_{f}','')).strip() for f in RESP_FIELDS}
+        if any(p.values()):respondents.append(p)
+    locked=set(str(x) for x in form.getlist('locked'))
+    locked_resp=set(int(x) for x in form.getlist('locked_resp') if str(x).isdigit())
+    return values,respondents,locked,locked_resp
 
-def field_html(k,v):
-    label=LABELS[k]
-    v=escape(v or "",quote=True)
-    if k in ("basvurucuAdres","karsitarafAdres","arabulucuAdres","uyusmazlik","talep"):
-        return f'<label>{escape(label)}</label><textarea name="{k}">{v}</textarea>'
-    return f'<label>{escape(label)}</label><input name="{k}" value="{v}">'
+def merge_state(values,respondents,locked,locked_resp,new_values,new_resp):
+    for k in values:
+        if k not in locked and new_values.get(k):values[k]=new_values[k]
+    # Kilitli satırlar korunur; yeni belgede bulunan taraflar boş/unlocked satırlara eklenir.
+    for i,p in enumerate(new_resp):
+        target=None
+        # Aynı isim varsa onunla birleştir.
+        if p.get('name'):
+            for j,cur in enumerate(respondents):
+                if cur.get('name','').strip().casefold()==p['name'].strip().casefold():target=j;break
+        if target is None:
+            for j,cur in enumerate(respondents):
+                if j not in locked_resp and not cur.get('name'):target=j;break
+        if target is None and len(respondents)<MAX_RESP:
+            respondents.append({f:'' for f in RESP_FIELDS});target=len(respondents)-1
+        if target is None:continue
+        if target in locked_resp:continue
+        for f in RESP_FIELDS:
+            if p.get(f):respondents[target][f]=p[f]
+    return values,respondents
 
-def editor_html(filename,values):
-    groups=[
-      ("Dosya Bilgileri",["basvuruNo","dosyaNo"]),
-      ("Arabulucu",["arabulucuAdi","arabulucuTc","arabulucuSicil","arabulucuAdres"]),
-      ("Başvurucu",["basvurucuAdiSoyadi","basvurucuTcKimlik","basvurucuAdres","basvurucuVekili","basvurucuTelefon","basvurucuEposta"]),
-      ("Karşı Taraf",["karsitarafAdiSoyadi","karsitarafTcKimlik","karsitarafAdres","karsitarafVekili"]),
-      ("Süreç",["uyusmazlik","talep","baslangicTarihi","bitisTarihi","duzenlemeYeri","duzenlemeTarihi"])
-    ]
-    cards=""
-    for title,keys in groups:
-        cards+=f'<section class="card"><h2>{escape(title)}</h2>'+''.join(field_html(k,values.get(k,"")) for k in keys)+'</section>'
+def respondent_body_block(template_text):
+    starts=[m.start() for m in re.finditer(r'KARŞI TARAF BİLGİLERİ',template_text,re.I)]
+    if not starts:return ''
+    s=starts[0]; e=template_text.find('Arabuluculuk Konusu Uyuşmazlık',s)
+    return template_text[s:e] if e>s else ''
+
+def fill_respondent_block(block,p):
+    reps=[(r'TC\s+Kimlik\s+No\s*[:：]\s*[^\n]*',f'TC Kimlik No\t\t: {p.get("tc","")}'),
+          (r'Adı\s+Soyadı\s*[:：]\s*[^\n]*',f'Adı Soyadı\t\t: {p.get("name","")}'),
+          (r'Adres\s*[:：]\s*[^\n]*',f'Adres\t\t: {p.get("address","")}'),
+          (r'Vekili\s*[:：]\s*[^\n]*',f'Vekili\t\t: {p.get("proxy","")}')]
+    out=block
+    for pat,val in reps:out=re.sub(pat,val,out,count=1,flags=re.I)
+    return out
+
+def set_parties_and_signatures(text,applicant,respondents,arb):
+    # Şablondaki mevcut isimleri önce yakala; sonra bütün metinde yeni taraflarla değiştir.
+    asec=section(text,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
+    old_app=first([r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)'],asec)
+    rsec0=section(text,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK'])
+    old_resp_names=[x.strip() for x in re.findall(r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)',rsec0,re.I) if x.strip()]
+    old_arb=first([r'ARABULUCU\s*[:：]\s*([^\n]+)',r'Adı\s+Soyadı\s*[:：]\s*([^\n]+)'],section(text,['ARABULUCU BİLGİLERİ','ARABULUCU'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ']))
+
+    if old_app and applicant.get('name'): text=text.replace(old_app,applicant['name'])
+    if old_arb and arb.get('name'): text=text.replace(old_arb,arb['name'])
+
+    # Başvurucu alanlarını yalnızca başvurucu bölümünde doldur.
+    vals={'basvurucuTcKimlik':applicant.get('tc',''),'basvurucuAdiSoyadi':applicant.get('name',''),'basvurucuAdres':applicant.get('address',''),'basvurucuVekili':applicant.get('proxy',''),'basvurucuTelefon':applicant.get('phone',''),'basvurucuEposta':applicant.get('email','')}
+    pats={
+      'basvurucuTcKimlik':r'TC\s+Kimlik\s+No\s*[:：]\s*[^\n]*',
+      'basvurucuAdiSoyadi':r'Adı\s+Soyadı\s*[:：]\s*[^\n]*',
+      'basvurucuAdres':r'Adres\s*[:：]\s*[^\n]*',
+      'basvurucuVekili':r'Vekili\s*[:：]\s*[^\n]*',
+      'basvurucuTelefon':r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*[^\n]*',
+      'basvurucuEposta':r'E-Posta\s+Adresi\s*[:：]\s*[^\n]*'}
+    s=text.find('BAŞVURU SAHİBİ BİLGİLERİ')
+    if s<0:s=text.find('BAŞVURUCU BİLGİLERİ')
+    e=text.find('KARŞI TARAF BİLGİLERİ',max(s,0));e=e if e>s else len(text)
+    if s>=0:
+        seg=text[s:e]
+        for k,v in vals.items():
+            if not v:continue
+            mm=re.search(pats[k],seg,re.I)
+            if mm:
+                oldline=mm.group(0); c=oldline.find(':')
+                newline=oldline[:c+1]+' '+v if c>=0 else oldline
+                seg=seg[:mm.start()]+newline+seg[mm.end():]
+        text=text[:s]+seg+text[e:]
+
+    names=[p.get('name','').strip() for p in respondents if p.get('name','').strip()]
+    combined=', '.join(names[:-1])+' ve '+names[-1] if len(names)>1 else (names[0] if names else '')
+    if old_resp_names and combined:
+        for old in old_resp_names:
+            if old and old not in names:text=text.replace(old,combined)
+
+    # Karşı taraf bölümünü ilk şablon bloğunu çoğaltarak tüm taraflar için oluştur.
+    if respondents:
+        s=text.find('KARŞI TARAF BİLGİLERİ');e=text.find('Arabuluculuk Konusu Uyuşmazlık',max(s,0))
+        if s>=0 and e>s:
+            block=text[s:e];head='KARŞI TARAF BİLGİLERİ';body=block[block.find(head)+len(head):]
+            chunks=[head+'\n'+fill_respondent_block(body,p) for p in respondents[:MAX_RESP]]
+            text=text[:s]+'\n\n'.join(chunks)+'\n\n'+text[e:]
+
+    # İmza bloğu: başvurucu Taraf 1, tüm karşı taraflar Taraf 2+ ve en sonda arabulucu.
+    sig=text.find('İMZALAR')
+    if sig>=0:
+        prefix=text[:sig]
+        lines=['İMZALAR','',f'Taraf 1        : {applicant.get("name","")}'+(f' - Vekili {applicant.get("proxy","")}' if applicant.get('proxy') else '')+'  (e-imza)','']
+        for i,p in enumerate(respondents[:MAX_RESP],start=2):
+            nm=p.get('name','').strip()
+            if not nm:continue
+            line=f'Taraf {i}        : {nm}'+(f' - Vekili {p.get("proxy","")}' if p.get('proxy') else '')+'  (e-imza)'
+            lines += [line,'']
+        lines += [f'Arabulucu   : {arb.get("name","")}'+(f' ({arb.get("sicil","")})' if arb.get('sicil') else '')+' (e-imza)','']
+        text=prefix+'\n'.join(lines)+'\n'
+    return text
+
+def fill_general(text,values):
+    # Şablonun etiketli alanlarını değiştir.
+    patterns={
+    'basvuruNo':r'BAŞVURU\s*NO\s*[:：]\s*[^\n]*','dosyaNo':r'DOSYA\s*NO\s*[:：]\s*[^\n]*',
+    'arabulucuAdi':r'(?:ARABULUCU\s*[:：]|Adı\s+Soyadı\s*[:：])\s*[^\n]*',
+    'arabulucuTc':r'(?:T\.?\s*C\.?\s*(?:KİMLİK\s+NUMARASI|Kimlik\s+No))\s*[:：]\s*[^\n]*',
+    'arabulucuSicil':r'(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*[^\n]*',
+    'arabulucuAdres':r'(?:ADRESİ|Adresi)\s*[:：]\s*[^\n]*',
+    'uyusmazlik':r'Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*[^\n]*',
+    'baslangicTarihi':r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*[^\n]*',
+    'bitisTarihi':r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*[^\n]*',
+    'duzenlemeYeri':r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*[^\n]*',
+    'duzenlemeTarihi':r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*[^\n]*',
+    'sonuc':r'Arabuluculuk\s+Sonucu\s*[:：]\s*[^\n]*'}
+    labels={'basvuruNo':'BAŞVURU NO','dosyaNo':'DOSYA  NO','arabulucuAdi':'ARABULUCU','arabulucuTc':'T.C KİMLİK NUMARASI','arabulucuSicil':'ARB. SİCİL NUMARASI','arabulucuAdres':'ADRESİ','uyusmazlik':'Arabuluculuk Konusu Uyuşmazlık','baslangicTarihi':'Arabuluculuk Sürecinin Başladığı Tarih','bitisTarihi':'Arabuluculuk Sürecinin Bittiği Tarih','duzenlemeYeri':'Son Tutanağın Düzenlendiği Yer','duzenlemeTarihi':'Son Tutanağın Düzenlendiği Tarih','sonuc':'Arabuluculuk Sonucu'}
+    for k,p in patterns.items():
+        if not values.get(k):continue
+        # First occurrence is generally the header field; for arabulucu ad we prefer explicit ARABULUCU line.
+        m=re.search(p,text,re.I)
+        if not m:continue
+        # Preserve label and replace after colon.
+        line=text[m.start():m.end()]
+        colon=line.find(':')
+        if colon>=0: line=line[:colon+1]+' '+values[k]
+        text=text[:m.start()]+line+text[m.end():]
+    return text
+
+def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message=''):
+    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuTcKimlik','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi'])]
+    def field(k):
+        lock='checked' if k in locked else ''
+        v=escape(values.get(k,''),quote=True)
+        if k in ('arabulucuAdres','basvurucuAdres','uyusmazlik','talep'):
+            el=f'<textarea name="{k}">{v}</textarea>'
+        else:
+            el=f'<input name="{k}" value="{v}">'
+        return f'<div class="field"><label>{escape(LABELS[k])}</label>{el}<label class="lock"><input type="checkbox" name="locked" value="{k}" {lock}> 🔒 Sabitle</label></div>'
+    cards=''
+    for title,ks in groups:
+        cards+=f'<section class="card"><h2>{escape(title)}</h2>'+''.join(field(k) for k in ks)+'</section>'
+
+    resp_html=''
+    count=max(len(respondents),1)
+    for i in range(count):
+        p=respondents[i] if i<len(respondents) else {f:'' for f in RESP_FIELDS}
+        lk='checked' if i in locked_resp else ''
+        h=f'<div class="party-head"><h3>Karşı Taraf {i+1}</h3><label class="lock"><input type="checkbox" name="locked_resp" value="{i}" {lk}> 🔒 Bu tarafı sabitle</label></div>'
+        body=''
+        for f in RESP_FIELDS:
+            v=escape(p.get(f,''),quote=True)
+            el=f'<textarea name="resp_{i}_{f}">{v}</textarea>' if f=='address' else f'<input name="resp_{i}_{f}" value="{v}">'
+            body+=f'<div class="party"><label>{escape(RESP_LABELS[f])}</label>{el}</div>'
+        resp_html+=f'<section class="card respondent-card">{h}{body}</section>'
+
     options=''.join(f'<option value="{escape(k)}">{escape(v[0])}</option>' for k,v in TEMPLATES.items())
-    hidden=""
-    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Son Tutanak Hazırla</title><style>
-*{{box-sizing:border-box}}body{{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}}.wrap{{max-width:1050px;margin:25px auto;padding:0 16px}}.grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}.card{{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}}h2{{font-size:20px}}label{{display:block;font-weight:bold;margin-top:12px}}input,textarea,select{{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}}textarea{{min-height:80px;resize:vertical}}button{{width:100%;background:#1769e0;color:#fff;border:0;border-radius:9px;padding:14px;font-weight:bold;margin-top:18px;cursor:pointer}}.hint{{color:#65717d;font-size:13px}}.badge{{background:#eef5ff;padding:10px;border-radius:8px;margin-bottom:15px}}@media(max-width:800px){{.grid{{grid-template-columns:1fr}}}}
-</style></head><body><div class="wrap"><h1>Son Tutanak Hazırla</h1><p class="hint">Kaynak: {escape(filename)}</p>
-<form action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>{cards}</div><div>
-<section class="card"><h2>Sonuç ve Belge Türü</h2><label>Belge türü</label><select name="template_choice" id="template_choice">{options}<option value="custom">Kendi UDF şablonumu yükle</option></select>
-<div id="custom_box" style="display:none"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div>
-<p class="hint">Hazır şablon seçerseniz uygulama kayıtlı UDF şablonunu kullanır. Özel şablon seçerseniz kendi UDF'niz kullanılır.</p>
-<button type="submit">✓ Son Tutanağı Oluştur</button></section>
-<section class="card"><h2>Kontrol</h2><div class="badge">Otomatik bulunan bilgiler düzenlenebilir. Bulunamayan alanları siz doldurabilirsiniz.</div>
-<p class="hint">Uygulama hazır şablonları biçimleriyle birlikte kullanır. Değiştirilmiş belgelerde eski elektronik imza dosyası taşınmaz.</p></section>
-</div></div></form></div>
-<script>
-const s=document.getElementById('template_choice'), c=document.getElementById('custom_box');
-function toggle(){{c.style.display=s.value==='custom'?'block':'none';}}
-s.addEventListener('change',toggle);toggle();
-</script></body></html>"""
+    msg=f'<div class="ok">{escape(message)}</div>' if message else ''
+    html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>
+*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
+</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
+let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Adı Soyadı</label><input name="resp_'+i+'_name"></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
+function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
+</script></body></html>'''
+    return html.replace('__FILENAME__',escape(filename)).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
 
-@app.get("/",response_class=HTMLResponse)
-async def home(request:Request):
-    return HTMLResponse(home_html())
+@app.get('/',response_class=HTMLResponse)
+async def home(request:Request):return HTMLResponse('''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak UDF Asistanı</title><style>body{font-family:Arial;background:#f2f5f8;margin:0}.box{max-width:760px;margin:50px auto;background:#fff;padding:32px;border-radius:18px;box-shadow:0 5px 25px #0001}input,button{width:100%;padding:13px;margin-top:10px}button{background:#1769e0;color:#fff;border:0;border-radius:9px;font-weight:bold}</style></head><body><div class="box"><h1>Son Tutanak UDF Asistanı</h1><p>Başvuru Formu UDF yükleyin; bilgileri çıkarın, sabitleyin, başka belgelerden tamamlayın ve son tutanağı oluşturun.</p><form action="/edit" method="post" enctype="multipart/form-data"><input type="file" name="file" accept=".udf" required><button>Başvuru Formunu Analiz Et</button></form></div></body></html>''')
 
-@app.post("/edit",response_class=HTMLResponse)
+@app.post('/edit',response_class=HTMLResponse)
 async def edit(request:Request,file:UploadFile=File(...)):
     try:
-        if not (file.filename or "").lower().endswith(".udf"): raise ValueError("Lütfen .udf dosyası seçin.")
-        _,text,_=read_udf(await file.read())
-        return HTMLResponse(editor_html(file.filename or "Başvuru Formu UDF",extract(text)))
-    except Exception as e:
-        return HTMLResponse(home_html(str(e)),status_code=400)
+        data=await file.read();xml,text,files=read_udf(data);values,respondents=extract(text)
+        return HTMLResponse(render_editor(file.filename or 'Başvuru Formu UDF',values,respondents))
+    except Exception as e:return HTMLResponse(str(e),400)
 
-@app.post("/build")
+@app.post('/merge',response_class=HTMLResponse)
+async def merge(request:Request,merge_file:UploadFile=File(...)):
+    try:
+        form=await request.form();values,respondents,locked,locked_resp=form_state(form)
+        data=await merge_file.read();_,text,_=read_udf(data);nv,nr=extract(text)
+        values,respondents=merge_state(values,respondents,locked,locked_resp,nv,nr)
+        return HTMLResponse(render_editor(merge_file.filename or 'Birleştirilmiş Bilgi Havuzu',values,respondents,locked,locked_resp,'Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur.'))
+    except Exception as e:return HTMLResponse(str(e),400)
+
+@app.post('/build')
 async def build(request:Request):
-    form=await request.form()
-    choice=str(form.get("template_choice",""))
-    values={k:str(form.get(k,"")).strip() for k,_ in FIELDS}
-    if not values.get("sonuc"):
-        values["sonuc"]=standard_result(choice)
-
-    if choice=="custom":
-        upload=form.get("custom_file")
-        if not isinstance(upload,UploadFile): return HTMLResponse("Özel UDF şablonu seçtiniz; lütfen dosya yükleyin.",400)
-        data=await upload.read()
-        if not (upload.filename or "").lower().endswith(".udf"): return HTMLResponse("Özel şablon .udf olmalıdır.",400)
-        source_name=Path(upload.filename or "son_tutanak").stem
-        try: xml,old,files=read_udf(data)
-        except Exception as e: return HTMLResponse(str(e),400)
-    else:
-        try: data=template_bytes(choice); source_name=Path(TEMPLATES[choice][1]).stem
-        except Exception as e: return HTMLResponse(str(e),500)
+    try:
+        form=await request.form();values,respondents,locked,locked_resp=form_state(form);choice=str(form.get('template_choice',''))
+        if not values.get('sonuc'):values['sonuc']=standard_result(choice)
+        if choice=='custom':
+            upload=form.get('custom_file')
+            if not isinstance(upload,UploadFile):return HTMLResponse('Özel UDF şablonu seçtiniz; lütfen dosya yükleyin.',400)
+            data=await upload.read();source_name=Path(upload.filename or 'son_tutanak').stem
+        else:data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
         xml,old,files=read_udf(data)
-
-    # Sonuç, seçilen belge türüne göre şablonda da değiştirilebilir.
-    result_text=standard_result(choice)
-    if choice!="custom" and result_text:
-        values["sonuc"] = result_text
-
-    new=old
-    changed=[]
-    for k,_ in FIELDS:
-        v=values.get(k,"")
-        if not v: continue
-        new,ok=replace_value(new,k,v)
-        if ok: changed.append(k)
-
-    if new==old:
-        return HTMLResponse("Şablonda değiştirilecek alan bulunamadı. Lütfen seçtiğiniz UDF şablonunun geçerli bir UDF olduğunu kontrol edin.",400)
-
-    result=build_udf(files,xml,old,new)
-    label=TEMPLATES[choice][0] if choice in TEMPLATES else "Özel Son Tutanak"
-    name=re.sub(r"[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]","_",source_name)+"_hazir.udf"
-    return StreamingResponse(io.BytesIO(result),media_type="application/octet-stream",
-        headers={"Content-Disposition":f'attachment; filename="{name}"'})
+        applicant={'name':values.get('basvurucuAdiSoyadi',''),'tc':values.get('basvurucuTcKimlik',''),'address':values.get('basvurucuAdres',''),'proxy':values.get('basvurucuVekili',''),'phone':values.get('basvurucuTelefon',''),'email':values.get('basvurucuEposta','')}
+        arb={'name':values.get('arabulucuAdi',''),'sicil':values.get('arabulucuSicil','')}
+        new=set_parties_and_signatures(old,applicant,respondents,arb)
+        new=fill_general(new,values)
+        # Talep son tutanakta ayrı etiket yoksa, anlatı kısmındaki ilk uygun talep alanına eklemiyoruz; mevcut şablon metni korunur.
+        if values.get('talep') and 'Talep' in new:
+            # Şablonda açık Talep etiketi varsa değiştir.
+            new,_=replace_once(new,[r'Talep(?:ler)?\s*[:：]\s*[^\n]*'],values['talep'])
+        if new==old:return HTMLResponse('Şablonda değişiklik yapılamadı. Alanları kontrol edin.',400)
+        result=build_udf(files,xml,old,new);label=TEMPLATES[choice][0] if choice in TEMPLATES else 'Özel Son Tutanak'
+        name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+'_hazir.udf'
+        return StreamingResponse(io.BytesIO(result),media_type='application/octet-stream',headers={'Content-Disposition':f'attachment; filename="{name}"'})
+    except Exception as e:return HTMLResponse(f'Belge oluşturulurken hata: {escape(str(e))}',500)
