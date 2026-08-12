@@ -15,7 +15,7 @@ FIELDS=[
 ('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
 ('basvurucuTelefon','Başvurucu Telefon'),('basvurucuEposta','Başvurucu E-Posta'),
-('dosyaTuru','Dosya Türü'),('uyusmazlik','Uyuşmazlık Konusu'),('talep','Talep'),
+('dosyaTuru','Dosya Türü'),('uyusmazlik','Arabuluculuk Konusu Uyuşmazlık'),('uyusmazlikTuru','Uyuşmazlık Türü'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
 ('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi')]
@@ -45,6 +45,75 @@ PATTERNS={
 'duzenlemeYeri':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]{2,120})'],
 'duzenlemeTarihi':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
 'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：]\s*([^\n<]{2,300})']}
+
+
+def normalize_date_value(value):
+    """Normalize common OCR/date forms to dd/mm/yyyy without guessing missing dates."""
+    v=re.sub(r'\s+',' ',(value or '').strip())
+    v=v.replace('.', '/').replace('-', '/')
+    m=re.search(r'(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{4})(?!\d)',v)
+    if m:
+        return f"{int(m.group(1)):02d}/{int(m.group(2)):02d}/{m.group(3)}"
+    # OCR frequently reads 24/07/2026 as 2410712026. Only accept exactly 8 digits
+    # when the middle pair forms a plausible month and the last four a year.
+    d=re.sub(r'\D','',v)
+    if len(d)==8:
+        dd,mm,yyyy=int(d[:2]),int(d[2:4]),d[4:]
+        if 1<=dd<=31 and 1<=mm<=12 and 1900<=int(yyyy)<=2200:
+            return f"{dd:02d}/{mm:02d}/{yyyy}"
+    # Common screenshot OCR error: 24/07/2026 -> 2410712026 (one extra digit).
+    if len(d)==10:
+        dd=int(d[:2]); yyyy=d[-4:]; middle=d[2:-4]
+        if len(middle)==4 and 1<=dd<=31:
+            mm=int(middle[1:3])
+            if 1<=mm<=12 and 1900<=int(yyyy)<=2200:
+                return f"{dd:02d}/{mm:02d}/{yyyy}"
+    return v
+
+def _label_value(text, labels, max_len=500):
+    """Read a table value after a label, tolerating OCR colon/tab/one-space loss."""
+    for label in labels:
+        # Most screenshot OCR output is one line: 'Dosya No 20261132654'.
+        pat=rf'(?im)^\s*{label}[ \t]*(?:[:：][ \t]*|[ \t]+)([^\n\r]+)'
+        m=re.search(pat,text)
+        if m:
+            value=re.sub(r'\s+',' ',m.group(1)).strip(' :：\t')
+            if value:
+                return value[:max_len]
+    return ''
+
+def normalize_case_number(value, full_text=''):
+    v=re.sub(r'\s+','',(value or '').strip())
+    # Prefer the exact case number printed in the page title/header.
+    m=re.search(r'(?im)^\s*(\d{4}/\d{3,})\s*[-–—]', full_text or '')
+    if m:
+        return m.group(1)
+    m=re.search(r'(?<!\d)(\d{4})\s*/\s*(\d{3,})(?!\d)', value or '')
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    return v
+
+
+def extract_dosya_bilgileri_screen(ptext):
+    """
+    Parses the UYAP/Arabuluculuk 'Dosya Bilgileri' screenshot/table.
+    This is intentionally independent from the application-form parser so that
+    screenshots can be merged with a form later.
+    """
+    t=clean_ocr_text(ptext)
+    out={}
+    out['dosyaTuru']=_label_value(t,[r'Dosya\s+Türü',r'Dosya\s+T[ÜU]r[ÜU]'])
+    out['dosyaNo']=normalize_case_number(_label_value(t,[r'Dosya\s+No',r'Dosya\s+Numarası']), t)
+    out['basvuruNo']=_label_value(t,[r'Başvuru\s+Dosya\s+No',r'Başvuru\s+Dosya\s+Numarası',r'Başvuru\s+No'])
+    out['baslangicTarihi']=normalize_date_value(_label_value(t,[r'Açılış\s+Tarihi',r'Başlangıç\s+Tarihi']))
+    out['uyusmazlikTuru']=_label_value(t,[r'Uyuşmazlık\s+Türü'])
+    out['sonuc']=_label_value(t,[r'Arabuluculuk\s+Sonucu'])
+    # The existing application intentionally uses DOSYA TÜRÜ as the value
+    # printed after 'Arabuluculuk Konusu Uyuşmazlık' in the final record.
+    out['dosyaTuru']=normalize_dosya_turu(out.get('dosyaTuru',''))
+    if out.get('dosyaTuru'):
+        out['uyusmazlik']=out['dosyaTuru']
+    return out
 
 def normalize_dosya_turu(value):
     value=re.sub(r"\s+", " ", (value or "").strip())
@@ -180,6 +249,10 @@ def extract_respondents(ptext):
 def extract(text):
     ptext=udf_plain(text); out={k:'' for k,_ in FIELDS}
     for k in ['basvuruNo','dosyaNo']: out[k]=first(PATTERNS[k],ptext)
+    screen=extract_dosya_bilgileri_screen(ptext)
+    for k,v in screen.items():
+        if v:
+            out[k]=v
     arbsec=section(ptext,['ARABULUCU BİLGİLERİ','ARABULUCU'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
     out['arabulucuAdi']=first([r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})',r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],arbsec) or first([r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],ptext)
     for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],ptext)
@@ -187,11 +260,17 @@ def extract(text):
     a=party_values(applicant)
     out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
     respondents=extract_respondents(ptext)
-    out['dosyaTuru']=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext))
+    generic_dosya=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext))
+    if generic_dosya and not out.get('dosyaTuru'):
+        out['dosyaTuru']=generic_dosya
     for k in ['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']:
-        out[k]=first(PATTERNS[k],ptext)
-    if out['dosyaTuru']:
+        v=first(PATTERNS[k],ptext)
+        if v and not out.get(k):
+            out[k]=v
+    if out.get('dosyaTuru'):
         out['uyusmazlik']=out['dosyaTuru']
+    if out.get('baslangicTarihi'):
+        out['baslangicTarihi']=normalize_date_value(out['baslangicTarihi'])
     return out,respondents
 
 def make_mapper(a,b):
@@ -650,7 +729,7 @@ def replace_meeting_paragraph(text, sentence):
     return text[:m.start()]+sentence+text[m.end():] if m else text
 
 def final_legal_paragraph(values):
-    kind=" ".join([values.get("dosyaTuru", ""), values.get("uyusmazlik", "")]).lower()
+    kind=" ".join([values.get("dosyaTuru", ""), values.get("uyusmazlik", ""), values.get("uyusmazlikTuru", "")]).lower()
     if "iş" in kind or "işçilik" in kind or "iş hukuku" in kind:
         return "İşbu arabuluculuk son tutanağı ÜÇ SAYFA olarak 6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanunu m. 17 ve 7036 sayılı İş Mahkemeleri Kanunu m. 3 uyarınca hep birlikte imza altına alındı."
     if "ticari" in kind or "ticaret" in kind:
@@ -691,7 +770,7 @@ def fill_general(text,values):
     return text
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message=''):
-    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['dosyaTuru','uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi']),('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
+    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi']),('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
     def field(k):
         lock='checked' if k in locked else ''
         v=escape(values.get(k,''),quote=True)
