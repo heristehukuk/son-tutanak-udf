@@ -1,3 +1,4 @@
+import os
 
 import io, os, re
 import pytesseract

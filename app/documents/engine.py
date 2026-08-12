@@ -1,6 +1,8 @@
+import os
 import io,re,zipfile,difflib
 from PIL import Image
 import pytesseract
+pytesseract.pytesseract.tesseract_cmd = os.environ.get('TESSERACT_CMD', '/usr/bin/tesseract')
 from pypdf import PdfReader
 from pdf2image import convert_from_bytes
 from pathlib import Path
