@@ -1,18 +1,32 @@
-# Son Tutanak UDF Asistanı v10
+# Son Tutanak UDF Asistanı v16
 
-Bu sürüm UDF içindeki gerçek `<paragraph>` yapısını da günceller. Böylece birden fazla karşı taraf eklendiğinde satırlar UYAP Doküman Editörü'nde birbirine yapışmaz.
+v15'in çalışan OCR/UDF motoru korunarak modüler üyelik, plan/limit, dosya,
+admin, mesaj ve anket katmanları eklenmiştir.
 
-Özellikler:
-- Başvuru UDF'sinden bilgi çıkarma
-- Birden fazla belgeyi bilgi havuzunda birleştirme
-- Alanları ve tarafları sabitleme
-- Birden fazla karşı taraf
-- Kişi/kurum ayrımı ve T.C. Kimlik No/Vergi No
-- Üç hazır son tutanak şablonu
-- Özel UDF şablonu
-- Karşı taraf ve imza bölümlerinde gerçek UDF paragraf yapısının korunması
-- Başvurucu/arabulucu isimlerinin belge içindeki ilgili kullanımlarının güncellenmesi
+## Render
+Build Command:
+`pip install -r requirements.txt`
 
-Render:
-Build: pip install -r requirements.txt
-Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+Start Command:
+`uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+İlk Super Admin için Render Environment Variables:
+- ADMIN_EMAIL
+- ADMIN_PASSWORD
+
+Şifreler geri okunabilir biçimde saklanmaz.
+
+## Kaynak belgeler
+UDF, PDF, JPG, JPEG ve PNG kabul edilir. Görüntü ve taranmış PDF'lerde
+Tesseract `tur+eng` OCR kullanılır; PDF'de seçilebilir metin yoksa sayfalar OCR edilir.
+
+## Modüller
+- auth: üyelik, onay, oturum ve güvenlik
+- plans: plan, özellik ve limit
+- files: UUID tabanlı dosya ve belge arşivi
+- documents: v15 OCR/UDF motoru
+- admin: üyelik ve yüklenen belgelerin yönetimi
+- messaging: mesaj altyapısı
+- surveys: anket altyapısı
+
+Üretimde HTTPS altında secure cookie kullanılmalıdır.
