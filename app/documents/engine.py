@@ -724,7 +724,10 @@ def build_meeting_sentence(values, applicant, respondents):
 
 def replace_meeting_paragraph(text, sentence):
     if not sentence: return text
-    pat=r"Arabulucu\s+.*?aracılığında;.*?görüşme\s+gerçekleştirdiler\."
+    # NOT: 'Arabulucu\s+.*?' başlıktaki 'ARABULUCU\t: Ad Soyad' alanına da (case-insensitive) eşleşip
+    # araya giren tüm taraf/dosya bilgilerini siliyordu. Başlık alanı her zaman ':' içerdiğinden,
+    # ilk boşluk aralığında ':' olmamasını şart koşarak yalnızca gerçek anlatım cümlesini hedefliyoruz.
+    pat=r"Arabulucu\s+[^:\n]*?aracılığında;.*?görüşme\s+gerçekleştirdiler\."
     m=re.search(pat,text,re.I|re.S)
     return text[:m.start()]+sentence+text[m.end():] if m else text
 
