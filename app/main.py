@@ -1,5 +1,6 @@
 
 import io, os, re
+import pytesseract
 from pathlib import Path
 from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
@@ -34,6 +35,15 @@ app.include_router(plans_router,prefix="/plans")
 async def startup():
     init_db(); seed_plans(); bootstrap_admin()
 
+def ocr_environment():
+    try:
+        return {
+            "tesseract": str(pytesseract.get_tesseract_version()),
+            "cmd": pytesseract.pytesseract.tesseract_cmd
+        }
+    except Exception as exc:
+        return {"error": str(exc), "cmd": getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract")}
+
 def bootstrap_admin():
     email=os.getenv("ADMIN_EMAIL"); password=os.getenv("ADMIN_PASSWORD")
     if not email or not password:return
@@ -52,6 +62,10 @@ def require_user(request):
     u=current_user(request)
     if not u or u["status"] in ("banned","rejected"):return None
     return u
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "ocr": ocr_environment()}
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):

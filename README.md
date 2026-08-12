@@ -30,3 +30,6 @@ Tesseract `tur+eng` OCR kullanılır; PDF'de seçilebilir metin yoksa sayfalar O
 - surveys: anket altyapısı
 
 Üretimde HTTPS altında secure cookie kullanılmalıdır.
+
+## Render OCR
+`apt.txt` installs Tesseract OCR, Turkish/English language data and Poppler. JPG/JPEG/PNG and scanned PDFs can therefore be OCR'd on Render.

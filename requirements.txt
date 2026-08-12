@@ -6,5 +6,4 @@ pypdf
 pillow
 pytesseract
 pdf2image
-
 uvicorn
