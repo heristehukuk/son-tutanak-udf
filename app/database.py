@@ -6,9 +6,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 GENERATED_DIR = DATA_DIR / "generated"
+CUSTOM_TEMPLATE_DIR = DATA_DIR / "custom_templates"
 DB_PATH = DATA_DIR / "app.db"
 
-for p in (DATA_DIR, UPLOAD_DIR, GENERATED_DIR):
+for p in (DATA_DIR, UPLOAD_DIR, GENERATED_DIR, CUSTOM_TEMPLATE_DIR):
     p.mkdir(parents=True, exist_ok=True)
 
 def connect():
@@ -70,6 +71,12 @@ def init_db():
             question_id TEXT NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             answer TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS custom_templates (
+            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL, is_shared INTEGER NOT NULL DEFAULT 0,
+            stored_path TEXT NOT NULL, recognized_json TEXT NOT NULL, unrecognized_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT, action TEXT NOT NULL,

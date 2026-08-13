@@ -12,15 +12,17 @@ from app.admin.routes import router as admin_router
 from app.messaging.routes import router as messaging_router
 from app.surveys.routes import router as surveys_router
 from app.plans.routes import router as plans_router
+from app.customtemplates.routes import router as templates_router
 from app.auth.service import get_user_by_session, now
 from app.auth.security import hash_password
 from app.plans.service import seed_plans, get_plan, feature_enabled, consume
 from app.files.service import save_document, create_case, save_generated
+from app.customtemplates.service import list_visible_templates, get_template, can_use_template, get_template_bytes
 from app.documents.engine import (
     read_udf, extract, render_editor, form_state, merge_state, template_bytes, TEMPLATES,
     extract_any_source, standard_result, set_parties_and_signatures, replace_meeting_paragraph,
     build_meeting_sentence, replace_final_legal_paragraph, fill_general, replace_talep_in_narrative,
-    update_offsets, rebuild_region_paragraphs, build_udf
+    update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template
 )
 from app.web import page
 
@@ -31,6 +33,7 @@ app.include_router(admin_router,prefix="/admin")
 app.include_router(messaging_router,prefix="/messages")
 app.include_router(surveys_router,prefix="/surveys")
 app.include_router(plans_router,prefix="/plans")
+app.include_router(templates_router,prefix="/templates")
 
 @app.on_event("startup")
 async def startup():
@@ -110,7 +113,7 @@ async def edit(request:Request,file:UploadFile=File(...)):
         values,respondents=extract(text)
         cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya")
         save_document(u["id"],data,file.filename or "kaynak",kind,cid)
-        html=render_editor(file.filename or "Kaynak Belge",values,respondents)
+        html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]))
         html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
@@ -129,7 +132,8 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         cid=str(form.get("case_id") or "")
         if cid:save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
-                           "Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur.")
+                           "Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur.",
+                           custom_templates=list_visible_templates(u["id"]))
         if cid:html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
@@ -145,26 +149,42 @@ async def build(request:Request):
         if not feature_enabled(plan,"documents.udf"):return HTMLResponse("Planınız UDF oluşturmayı desteklemiyor.",403)
         if not consume(u["id"],"udf",plan["limits"].get("udf.monthly")):return HTMLResponse("Aylık UDF oluşturma limitiniz dolmuştur.",429)
         if not values.get("sonuc"):values["sonuc"]=standard_result(choice)
-        if choice=="custom":
+        is_bracket_template=False
+        if choice.startswith("tpl_"):
+            row=get_template(choice[len("tpl_"):])
+            if not row or not can_use_template(row,u):return HTMLResponse("Bu şablona erişim yetkiniz yok.",403)
+            data=get_template_bytes(row);source_name=re.sub(r'\.udf$','',row["name"],flags=re.I) or "son_tutanak"
+            is_bracket_template=True
+        elif choice=="custom":
             upload=form.get("custom_file")
             if not isinstance(upload,UploadFile):return HTMLResponse("Özel UDF şablonu yükleyin.",400)
             data=await upload.read();source_name=Path(upload.filename or "son_tutanak").stem
         else:data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
         xml,old,files=read_udf(data)
-        applicant={"type":"kurum" if values.get("basvurucuVergiNo") else "kisi",
-                   "tax":values.get("basvurucuVergiNo",""),"name":values.get("basvurucuAdiSoyadi",""),
-                   "tc":values.get("basvurucuTcKimlik",""),"address":values.get("basvurucuAdres",""),
-                   "proxy":values.get("basvurucuVekili",""),"phone":values.get("basvurucuTelefon",""),
-                   "email":values.get("basvurucuEposta","")}
-        arb={"name":values.get("arabulucuAdi",""),"sicil":values.get("arabulucuSicil","")}
-        new=set_parties_and_signatures(old,applicant,respondents,arb)
-        new=replace_meeting_paragraph(new,build_meeting_sentence(values,{**applicant,"_arb_name":arb["name"]},respondents))
-        new=replace_final_legal_paragraph(new,values); new=fill_general(new,values)
-        if values.get("talep"):new=replace_talep_in_narrative(new,values["talep"])
-        xml=update_offsets(xml,old,new)
-        xml=rebuild_region_paragraphs(xml,old,new,"KARŞI TARAF BİLGİLERİ","Arabuluculuk Konusu Uyuşmazlık")
-        xml=rebuild_region_paragraphs(xml,old,new,"İMZALAR",None)
-        result=build_udf(files,xml,old,new)
+        # "custom" (tek seferlik) yüklemede de köşeli parantez varsa yeni motoru kullan.
+        if choice=="custom" and not is_bracket_template:
+            recognized,_=scan_custom_template(old)
+            if recognized:is_bracket_template=True
+        if is_bracket_template:
+            # Kendi şablonu / köşeli parantez sistemi: sabit etiket motoru yerine [alan] değişimi kullanılır.
+            new=fill_custom_template(old,values,respondents)
+            xml=update_offsets(xml,old,new)
+            result=build_udf(files,xml,old,new)
+        else:
+            applicant={"type":"kurum" if values.get("basvurucuVergiNo") else "kisi",
+                       "tax":values.get("basvurucuVergiNo",""),"name":values.get("basvurucuAdiSoyadi",""),
+                       "tc":values.get("basvurucuTcKimlik",""),"address":values.get("basvurucuAdres",""),
+                       "proxy":values.get("basvurucuVekili",""),"phone":values.get("basvurucuTelefon",""),
+                       "email":values.get("basvurucuEposta","")}
+            arb={"name":values.get("arabulucuAdi",""),"sicil":values.get("arabulucuSicil","")}
+            new=set_parties_and_signatures(old,applicant,respondents,arb)
+            new=replace_meeting_paragraph(new,build_meeting_sentence(values,{**applicant,"_arb_name":arb["name"]},respondents))
+            new=replace_final_legal_paragraph(new,values); new=fill_general(new,values)
+            if values.get("talep"):new=replace_talep_in_narrative(new,values["talep"])
+            xml=update_offsets(xml,old,new)
+            xml=rebuild_region_paragraphs(xml,old,new,"KARŞI TARAF BİLGİLERİ","Arabuluculuk Konusu Uyuşmazlık")
+            xml=rebuild_region_paragraphs(xml,old,new,"İMZALAR",None)
+            result=build_udf(files,xml,old,new)
         cid=str(form.get("case_id") or "")
         if cid:
             save_generated(u["id"],cid,result,TEMPLATES.get(choice,("Özel Son Tutanak","",""))[0])

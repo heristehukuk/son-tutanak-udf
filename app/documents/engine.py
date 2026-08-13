@@ -24,6 +24,108 @@ RESP_FIELDS=['type','tc','tax','name','address','proxy','phone','email']
 RESP_LABELS={'type':'Taraf Türü','tc':'T.C. Kimlik No','tax':'Vergi No','name':'Adı Soyadı / Unvanı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
 MAX_RESP=10
 
+# ---------------------------------------------------------------------------
+# ÖZEL ("Kendi Şablonum") KÖŞELİ PARANTEZ SİSTEMİ
+# Kullanıcı kendi .udf şablonunu yükler; içindeki [dosya no], [başvurucu adı],
+# [karşı taraf 1 adı] gibi köşeli parantezli ifadeler otomatik olarak mevcut
+# kutucuklarla eşleştirilir. Tanınmayan ifadeler boş bırakılır.
+# ---------------------------------------------------------------------------
+BRACKET_RE = re.compile(r'\[([^\[\]]{1,80})\]')
+
+_TR_ASCII_MAP = str.maketrans({'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u','İ':'i','I':'i'})
+
+def normalize_bracket_text(s):
+    s = (s or '').strip().lower().translate(_TR_ASCII_MAP)
+    return re.sub(r'[^a-z0-9]+', '', s)
+
+# Şablon alanı -> normalize edilmiş eş anlamlı ifadeler
+FIELD_SYNONYMS = {
+    'basvuruno':'basvuruNo','basvurunumarasi':'basvuruNo',
+    'dosyano':'dosyaNo','dosyanumarasi':'dosyaNo',
+    'arabulucuadi':'arabulucuAdi','arabulucuadisoyadi':'arabulucuAdi','arabulucu':'arabulucuAdi',
+    'arabulucutc':'arabulucuTc','arabulucutckimlikno':'arabulucuTc','arabulucutckimliknumarasi':'arabulucuTc',
+    'arabulucusicil':'arabulucuSicil','arabulucusicilno':'arabulucuSicil','arbsicilno':'arabulucuSicil','arbsicilnumarasi':'arabulucuSicil',
+    'arabulucuadres':'arabulucuAdres','arabulucubüroadresi':'arabulucuAdres','arabulucuburoadresi':'arabulucuAdres',
+    'basvurucuadisoyadi':'basvurucuAdiSoyadi','basvurucuadi':'basvurucuAdiSoyadi','basvurucu':'basvurucuAdiSoyadi',
+    'basvurucuadres':'basvurucuAdres',
+    'basvurucuvekili':'basvurucuVekili','basvurucuvekil':'basvurucuVekili',
+    'basvurucutelefon':'basvurucuTelefon','basvurucuceptel':'basvurucuTelefon','basvurucutelefonnumarasi':'basvurucuTelefon',
+    'basvurucueposta':'basvurucuEposta','basvurucuepostaadresi':'basvurucuEposta','basvurucuemail':'basvurucuEposta',
+    'basvurucutckimlikno':'basvurucuTcKimlik','basvurucutc':'basvurucuTcKimlik','basvurucutckimliknumarasi':'basvurucuTcKimlik',
+    'basvurucuvergino':'basvurucuVergiNo','basvurucuverginumarasi':'basvurucuVergiNo',
+    'dosyaturu':'dosyaTuru',
+    'uyusmazlik':'uyusmazlik','uyusmazlikkonusu':'uyusmazlik','arabuluculukkonusuuyusmazlik':'uyusmazlik',
+    'uyusmazlikturu':'uyusmazlikTuru',
+    'talep':'talep','talepkonusu':'talep',
+    'baslangictarihi':'baslangicTarihi','surecbaslangictarihi':'baslangicTarihi',
+    'bitistarihi':'bitisTarihi','surecbitistarihi':'bitisTarihi',
+    'duzenlemeyeri':'duzenlemeYeri','tutanagindüzenlendigiyer':'duzenlemeYeri','sontutanagindüzenlendigiyer':'duzenlemeYeri',
+    'duzenlemetarihi':'duzenlemeTarihi','tutanagindüzenlendigitarih':'duzenlemeTarihi',
+    'sonuc':'sonuc','arabuluculuksonucu':'sonuc',
+    'gorusmesekli':'gorusmeSekli',
+    'gorusmetarihi':'gorusmeTarihi',
+    'gorusmesaati':'gorusmeSaati',
+    'gorusmeadresi':'gorusmeAdresi',
+}
+FIELD_SYNONYMS = {normalize_bracket_text(k):v for k,v in FIELD_SYNONYMS.items()}
+
+# Karşı taraf alt-alanları (ör. "karşı taraf 1 adı" -> ('resp', 0, 'name'))
+RESP_FIELD_SYNONYMS = {
+    'adi':'name','adisoyadi':'name','unvani':'name','adisoyadiunvani':'name',
+    'adres':'address',
+    'vekili':'proxy','vekil':'proxy',
+    'tc':'tc','tckimlikno':'tc','tckimliknumarasi':'tc',
+    'vergino':'tax','verginumarasi':'tax',
+    'telefon':'phone','ceptel':'phone',
+    'eposta':'email','email':'email',
+}
+_RESP_PREFIX_RE = re.compile(r'^(?:karsitaraf|digertaraf)(\d+)(.+)$')
+
+def resolve_bracket_token(raw_text):
+    """Köşeli parantez içindeki metni ('dosya no', 'karşı taraf 1 adı' vb.) çözer.
+    Dönüş: ('field', field_key) | ('resp', index, resp_field_key) | None (tanınmadı)"""
+    norm = normalize_bracket_text(raw_text)
+    if not norm: return None
+    m = _RESP_PREFIX_RE.match(norm)
+    if m:
+        idx = int(m.group(1)) - 1
+        rf = RESP_FIELD_SYNONYMS.get(m.group(2))
+        return ('resp', idx, rf) if rf else None
+    fk = FIELD_SYNONYMS.get(norm)
+    return ('field', fk) if fk else None
+
+def scan_custom_template(text):
+    """Şablon metnindeki tüm [..] ifadelerini tarar. (tanınan, tanınmayan) listelerini döner."""
+    recognized, unrecognized, seen = [], [], set()
+    for m in BRACKET_RE.finditer(text):
+        raw = m.group(1).strip()
+        key = raw.lower()
+        if key in seen: continue
+        seen.add(key)
+        res = resolve_bracket_token(raw)
+        if res is None:
+            unrecognized.append(raw)
+        elif res[0]=='field':
+            recognized.append({'raw':raw,'target':LABELS.get(res[1],res[1])})
+        else:
+            _,idx,rf = res
+            recognized.append({'raw':raw,'target':f'Karşı Taraf {idx+1} – {RESP_LABELS.get(rf,rf)}'})
+    return recognized, unrecognized
+
+def fill_custom_template(text, values, respondents):
+    """[dosya no] gibi köşeli parantezleri ilgili kutucuk değerleriyle değiştirir.
+    Tanınmayan ifadeler boş bırakılır (silinir)."""
+    def repl(m):
+        res = resolve_bracket_token(m.group(1))
+        if res is None: return ''
+        if res[0]=='field':
+            return values.get(res[1]) or ''
+        _,idx,rf = res
+        if 0<=idx<len(respondents):
+            return respondents[idx].get(rf) or ''
+        return ''
+    return BRACKET_RE.sub(repl, text)
+
 PATTERNS={
 'basvuruNo':[r'BAŞVURU\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Başvuru\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
 'dosyaNo':[r'DOSYA\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Dosya\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
@@ -612,10 +714,11 @@ def set_parties_and_signatures(text,applicant,respondents,arb):
                 f'{id_label}\t\t: {id_value}',
                 f'{name_label}\t\t: {p.get("name","")}',
                 f'Adres\t\t: {p.get("address","")}',
-                f'Vekili\t\t: {p.get("proxy","")}'
+                f'Vekili\t\t: {p.get("proxy","")}',
+                f'Cep Tel\t\t: {p.get("phone","")}'
             ]
-            if p.get('phone'):
-                lines.append(f'Cep Tel\t\t: {p.get("phone","")}')
+            if p.get('email'):
+                lines.append(f'E-posta\t\t: {p.get("email","")}')
             blocks.append('\n'.join(lines))
         new_section=heading+'\n\n'+'\n\n'.join(blocks)+'\n\n\n'
         text=text[:s]+new_section+text[e:]
@@ -760,31 +863,49 @@ def fill_general(text,values):
     'duzenlemeTarihi':r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*[^\n]*',
     'sonuc':r'Arabuluculuk\s+Sonucu\s*[:：]\s*[^\n]*'}
     labels={'basvuruNo':'BAŞVURU NO','dosyaNo':'DOSYA  NO','arabulucuAdi':'ARABULUCU','arabulucuTc':'T.C KİMLİK NUMARASI','arabulucuSicil':'ARB. SİCİL NUMARASI','arabulucuAdres':'ADRESİ','uyusmazlik':'Arabuluculuk Konusu Uyuşmazlık','talep':'Talep','baslangicTarihi':'Arabuluculuk Sürecinin Başladığı Tarih','bitisTarihi':'Arabuluculuk Sürecinin Bittiği Tarih','duzenlemeYeri':'Son Tutanağın Düzenlendiği Yer','duzenlemeTarihi':'Son Tutanağın Düzenlendiği Tarih','sonuc':'Arabuluculuk Sonucu'}
+    # "Arabuluculuk Konusu Uyuşmazlık" alanına yazılacak esas değer: Dosya Türü kutucuğu esas alınır.
+    # Uyuşmazlık kutucuğu yalnızca kontrol/karşılaştırma amaçlıdır ve belgeye yazılmaz.
+    # Uyuşmazlık Türü doluysa, esas değerin yanına parantez içinde eklenir.
+    dosya_turu=(values.get('dosyaTuru') or '').strip()
+    uyusmazlik_turu=(values.get('uyusmazlikTuru') or '').strip()
+    base=dosya_turu or (values.get('uyusmazlik') or '').strip()
+    effective_uyusmazlik=f"{base} ({uyusmazlik_turu})" if base and uyusmazlik_turu else base
     for k,p in patterns.items():
-        if not values.get(k):continue
+        val=effective_uyusmazlik if k=='uyusmazlik' else values.get(k)
+        if not val:continue
         # First occurrence is generally the header field; for arabulucu ad we prefer explicit ARABULUCU line.
         m=re.search(p,text,re.I)
         if not m:continue
         # Preserve label and replace after colon.
         line=text[m.start():m.end()]
         colon=line.find(':')
-        if colon>=0: line=line[:colon+1]+' '+values[k]
+        if colon>=0: line=line[:colon+1]+' '+val
         text=text[:m.start()]+line+text[m.end():]
     return text
 
-def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message=''):
-    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),('Başvurucu',['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']),('Süreç',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi']),('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
+def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None):
+    groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
+            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),
+            ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
+            ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
+    # Belgeye hangi alanın esas alındığını netleştiren kısa ipuçları.
+    HINTS={
+        'dosyaTuru':'Son tutanağa "Arabuluculuk Konusu Uyuşmazlık" olarak esas bu alan yazılır.',
+        'uyusmazlik':'Yalnızca kontrol/karşılaştırma amaçlıdır; belgeye yazılmaz (Dosya Türü esas alınır).',
+        'uyusmazlikTuru':'Doluysa Dosya Türü değerinin yanına parantez içinde eklenir.',
+    }
     def field(k):
         lock='checked' if k in locked else ''
         v=escape(values.get(k,''),quote=True)
         if k=='gorusmeSekli':
             sel=(values.get(k) or 'Telekonferans').strip().lower()
             el=f'<select name="{k}"><option value="Telekonferans" {"selected" if sel=="telekonferans" else ""}>Telekonferans</option><option value="Yüz yüze" {"selected" if sel.startswith("yüz") else ""}>Yüz yüze</option></select>'
-        elif k in ('arabulucuAdres','basvurucuAdres','uyusmazlik','talep','gorusmeAdresi'):
+        elif k in ('arabulucuAdres','basvurucuAdres','uyusmazlik','talep','gorusmeAdresi','sonuc'):
             el=f'<textarea name="{k}">{v}</textarea>'
         else:
             el=f'<input name="{k}" value="{v}">'
-        return f'<div class="field"><label>{escape(LABELS[k])}</label>{el}<label class="lock"><input type="checkbox" name="locked" value="{k}" {lock}> 🔒 Sabitle</label></div>'
+        hint=f'<p class="hint">{escape(HINTS[k])}</p>' if k in HINTS else ''
+        return f'<div class="field"><label>{escape(LABELS[k])}</label>{el}{hint}<label class="lock"><input type="checkbox" name="locked" value="{k}" {lock}> 🔒 Sabitle</label></div>'
     cards=''
     # Başvurucu türü otomatik belirlenir; kullanıcıdan ayrıca seçim istenmez.
     atax=escape(values.get('basvurucuVergiNo',''),quote=True)
@@ -797,12 +918,13 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
         type_note='Gerçek kişi olarak algılandı (T.C. Kimlik No mevcut).'
     else:
         type_note='Taraf türü numara bilgisine göre otomatik belirlenecek.'
-    applicant_extra=f'''<section class="card"><h2>Başvurucu Kimlik Bilgisi</h2>
+    # Kimlik (TC/Vergi No) ve iletişim bilgileri artık tek "Başvurucu" kartında birlikte.
+    basvurucu_fields=''.join(field(k) for k in ['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta'])
+    cards+=f'''<section class="card"><h2>Başvurucu</h2>
 <label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}">
 <label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}">
 <p class="hint">{escape(type_note)}</p>
-</section>'''
-    cards+=applicant_extra
+{basvurucu_fields}</section>'''
     for title,ks in groups:
         cards+=f'<section class="card"><h2>{escape(title)}</h2>'+''.join(field(k) for k in ks)+'</section>'
 
@@ -829,6 +951,7 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
         resp_html+=f'<section class="card respondent-card">{h}{body}</section>'
 
     options=''.join(f'<option value="{escape(k)}">{escape(v[0])}</option>' for k,v in TEMPLATES.items())
+    options+=''.join(f'<option value="tpl_{escape(t["id"])}">{escape(t["name"])} (Kendi Şablonum)</option>' for t in (custom_templates or []))
     msg=f'<div class="ok">{escape(message)}</div>' if message else ''
     html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>
 *{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
