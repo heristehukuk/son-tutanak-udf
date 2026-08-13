@@ -6,7 +6,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 GENERATED_DIR = DATA_DIR / "generated"
-CUSTOM_TEMPLATE_DIR = DATA_DIR / "custom_templates"
+# NOT: database.py, app/ paket kökünde; documents/engine.py bir seviye derinde (documents/ altında).
+# Bu yüzden "templates/udf" klasörüne engine.py'deki TEMPLATE_DIR ile AYNI fiziksel yola ulaşmak için
+# burada parents[1] değil, doğrudan bu dosyanın bulunduğu klasör (.parent) esas alınır.
+CUSTOM_TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "udf" / "users_sablon"
 DB_PATH = DATA_DIR / "app.db"
 
 for p in (DATA_DIR, UPLOAD_DIR, GENERATED_DIR, CUSTOM_TEMPLATE_DIR):
