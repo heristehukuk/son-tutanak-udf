@@ -1,6 +1,6 @@
 import os
 
-import io, os, re
+import io, os, re, urllib.parse
 import pytesseract
 from pathlib import Path
 from fastapi import FastAPI, Request, UploadFile, File
@@ -194,6 +194,8 @@ async def build(request:Request):
                           (values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Dosya",
                            now().isoformat(),cid,u["id"]))
         name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+"_hazir.udf"
+        ascii_fallback=re.sub(r'[^A-Za-z0-9_.-]','_',name) or "son_tutanak_hazir.udf"
+        quoted=urllib.parse.quote(name)
         return StreamingResponse(io.BytesIO(result),media_type="application/octet-stream",
-                                 headers={"Content-Disposition":f'attachment; filename="{name}"'})
+                                 headers={"Content-Disposition":f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"})
     except Exception as e:return HTMLResponse(f"Belge oluşturulurken hata: {e}",500)
