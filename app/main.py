@@ -70,7 +70,8 @@ def require_user(request):
 @app.get("/health")
 async def health():
     return {"status": "ok", "ocr": ocr_environment()}
-    @app.get("/health/supabase")
+    
+@app.get("/health/supabase")
 async def supabase_health_check():
     return supabase_health()
 
