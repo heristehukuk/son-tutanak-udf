@@ -25,7 +25,7 @@ from app.documents.engine import (
     update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template
 )
 from app.web import page
-
+from app.supabase_client import supabase_health
 app=FastAPI(title="Son Tutanak UDF Asistanı v16")
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
@@ -70,6 +70,9 @@ def require_user(request):
 @app.get("/health")
 async def health():
     return {"status": "ok", "ocr": ocr_environment()}
+    @app.get("/health/supabase")
+async def supabase_health_check():
+    return supabase_health()
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
