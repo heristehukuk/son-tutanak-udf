@@ -7,6 +7,7 @@ from pypdf import PdfReader
 from pdf2image import convert_from_bytes
 from pathlib import Path
 from html import escape
+from datetime import date
 
 FIELDS=[
 ('basvuruNo','Başvuru No'),('dosyaNo','Dosya No'),
@@ -81,11 +82,26 @@ RESP_FIELD_SYNONYMS = {
 }
 _RESP_PREFIX_RE = re.compile(r'^(?:karsitaraf|digertaraf)(\d+)(.+)$')
 
+# Kutucuklardan gelmeyen, sistem tarafından otomatik hesaplanan köşeli parantez ifadeleri.
+# Örn: [Bugün()], [bugün], [tarih] -> belge oluşturulduğu günün tarihi.
+COMPUTED_BRACKETS = {
+    'bugun': lambda: date.today().strftime('%d/%m/%Y'),
+    'bugunun tarihi'.replace(' ',''): lambda: date.today().strftime('%d/%m/%Y'),
+    'tarih': lambda: date.today().strftime('%d/%m/%Y'),
+    'gununtarihi'.replace(' ',''): lambda: date.today().strftime('%d/%m/%Y'),
+}
+COMPUTED_LABELS = {
+    'bugun': "Bugünün Tarihi (otomatik doldurulur)",
+    'tarih': "Bugünün Tarihi (otomatik doldurulur)",
+}
+
 def resolve_bracket_token(raw_text):
-    """Köşeli parantez içindeki metni ('dosya no', 'karşı taraf 1 adı' vb.) çözer.
-    Dönüş: ('field', field_key) | ('resp', index, resp_field_key) | None (tanınmadı)"""
+    """Köşeli parantez içindeki metni ('dosya no', 'karşı taraf 1 adı', 'Bugün()' vb.) çözer.
+    Dönüş: ('field', field_key) | ('resp', index, resp_field_key) | ('computed', fn) | None (tanınmadı)"""
     norm = normalize_bracket_text(raw_text)
     if not norm: return None
+    if norm in COMPUTED_BRACKETS:
+        return ('computed', norm)
     m = _RESP_PREFIX_RE.match(norm)
     if m:
         idx = int(m.group(1)) - 1
@@ -107,6 +123,8 @@ def scan_custom_template(text):
             unrecognized.append(raw)
         elif res[0]=='field':
             recognized.append({'raw':raw,'target':LABELS.get(res[1],res[1])})
+        elif res[0]=='computed':
+            recognized.append({'raw':raw,'target':COMPUTED_LABELS.get(res[1],'Otomatik Hesaplanan Alan')})
         else:
             _,idx,rf = res
             recognized.append({'raw':raw,'target':f'Karşı Taraf {idx+1} – {RESP_LABELS.get(rf,rf)}'})
@@ -120,6 +138,9 @@ def fill_custom_template(text, values, respondents):
         if res is None: return ''
         if res[0]=='field':
             return values.get(res[1]) or ''
+        if res[0]=='computed':
+            try:return COMPUTED_BRACKETS[res[1]]()
+            except Exception:return ''
         _,idx,rf = res
         if 0<=idx<len(respondents):
             return respondents[idx].get(rf) or ''
