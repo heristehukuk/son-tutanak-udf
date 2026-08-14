@@ -21,6 +21,7 @@ FIELDS=[
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
 ('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi')]
 LABELS=dict(FIELDS)
+LABELS['_userIban']='Arabulucu IBAN (kullanıcı profilinden, otomatik)'
 RESP_FIELDS=['type','tc','tax','name','address','proxy','phone','email']
 RESP_LABELS={'type':'Taraf Türü','tc':'T.C. Kimlik No','tax':'Vergi No','name':'Adı Soyadı / Unvanı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
 MAX_RESP=10
@@ -67,6 +68,7 @@ FIELD_SYNONYMS = {
     'gorusmetarihi':'gorusmeTarihi',
     'gorusmesaati':'gorusmeSaati',
     'gorusmeadresi':'gorusmeAdresi',
+    'iban':'_userIban',
 }
 FIELD_SYNONYMS = {normalize_bracket_text(k):v for k,v in FIELD_SYNONYMS.items()}
 
@@ -80,19 +82,59 @@ RESP_FIELD_SYNONYMS = {
     'telefon':'phone','ceptel':'phone',
     'eposta':'email','email':'email',
 }
+_TR_ONES=["", "bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz"]
+_TR_TENS=["", "on", "yirmi", "otuz", "kırk", "elli", "altmış", "yetmiş", "seksen", "doksan"]
+
+def _tr_three_digit_words(n):
+    parts=[]
+    yuz,kalan=divmod(n,100)
+    if yuz==1: parts.append("yüz")
+    elif yuz>1: parts.append(_TR_ONES[yuz]); parts.append("yüz")
+    on,bir=divmod(kalan,10)
+    if on: parts.append(_TR_TENS[on])
+    if bir: parts.append(_TR_ONES[bir])
+    return parts
+
+def turkce_sayi_yazi(n):
+    """Tamsayıyı Türkçe yazıyla ifade eder. Örn: 3 -> 'üç', 11 -> 'on bir'."""
+    if n==0: return "sıfır"
+    if n<0: return "eksi "+turkce_sayi_yazi(-n)
+    parts=[]
+    milyon,n=divmod(n,1_000_000)
+    bin_,kalan=divmod(n,1000)
+    if milyon:
+        parts += (["milyon"] if milyon==1 else _tr_three_digit_words(milyon)+["milyon"])
+    if bin_:
+        parts += (["bin"] if bin_==1 else _tr_three_digit_words(bin_)+["bin"])
+    if kalan: parts += _tr_three_digit_words(kalan)
+    return " ".join(parts)
+
+def join_turkish_list(items):
+    """['A','B','C'] -> 'A, B ve C' (Türkçe liste biçimi)."""
+    items=[i for i in items if i]
+    if not items: return ""
+    if len(items)==1: return items[0]
+    return ", ".join(items[:-1])+" ve "+items[-1]
+
 _RESP_PREFIX_RE = re.compile(r'^(?:karsitaraf|digertaraf)(\d+)(.+)$')
 
 # Kutucuklardan gelmeyen, sistem tarafından otomatik hesaplanan köşeli parantez ifadeleri.
-# Örn: [Bugün()], [bugün], [tarih] -> belge oluşturulduğu günün tarihi.
+# Örn: [Bugün()], [tüm taraflar], [taraf sayısı].
 COMPUTED_BRACKETS = {
-    'bugun': lambda: date.today().strftime('%d/%m/%Y'),
-    'bugunun tarihi'.replace(' ',''): lambda: date.today().strftime('%d/%m/%Y'),
-    'tarih': lambda: date.today().strftime('%d/%m/%Y'),
-    'gununtarihi'.replace(' ',''): lambda: date.today().strftime('%d/%m/%Y'),
+    'bugun': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
+    'bugunuuntarihi': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
+    'tarih': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
+    'gununtarihi': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
+    # Başvurucu hariç, tüm karşı tarafların adları sırasıyla ve Türkçe liste biçiminde ("A, B ve C").
+    'tumtaraflar': lambda values,respondents: join_turkish_list([(r.get('name') or '').strip() for r in respondents]),
+    # Başvurucu dahil TOPLAM taraf sayısı, rakam + Türkçe yazıyla: "3 (üç)".
+    'tarafsayisi': lambda values,respondents: (lambda t: f"{t} ({turkce_sayi_yazi(t)})")(1+len(respondents)),
 }
 COMPUTED_LABELS = {
     'bugun': "Bugünün Tarihi (otomatik doldurulur)",
     'tarih': "Bugünün Tarihi (otomatik doldurulur)",
+    'tumtaraflar': "Tüm Karşı Tarafların Adları (otomatik, başvurucu hariç)",
+    'tarafsayisi': "Toplam Taraf Sayısı (otomatik, rakam + yazıyla)",
 }
 
 def resolve_bracket_token(raw_text):
@@ -139,7 +181,7 @@ def fill_custom_template(text, values, respondents):
         if res[0]=='field':
             return values.get(res[1]) or ''
         if res[0]=='computed':
-            try:return COMPUTED_BRACKETS[res[1]]()
+            try:return COMPUTED_BRACKETS[res[1]](values,respondents)
             except Exception:return ''
         _,idx,rf = res
         if 0<=idx<len(respondents):

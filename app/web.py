@@ -15,6 +15,7 @@ def page(title, body, status=200):
     <meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)}</title>
     <style>{CSS}</style></head><body><nav>
     <a href="/">Son Tutanak UDF</a><a href="/files/">Dosyalar</a><a href="/templates/">Şablonlarım</a>
-    <a href="/messages/">Mesajlar</a><a href="/surveys/">Anketler</a><a href="/plans/">Planlar</a><a href="/auth/login">Giriş</a>
+    <a href="/messages/">Mesajlar</a><a href="/surveys/">Anketler</a><a href="/plans/">Planlar</a>
+    <a href="/auth/profile">Profilim</a><a href="/auth/login">Giriş</a>
     </nav><main class="wrap">{body}</main></body></html>"""
     return HTMLResponse(html, status_code=status)

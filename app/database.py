@@ -28,7 +28,7 @@ def init_db():
             id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL,
             password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
             plan_id TEXT NOT NULL DEFAULT 'free', is_super_admin INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL, approved_at TEXT, expires_at TEXT, last_ip TEXT
+            created_at TEXT NOT NULL, approved_at TEXT, expires_at TEXT, last_ip TEXT, iban TEXT
         );
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -86,3 +86,8 @@ def init_db():
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
         );
         """)
+        # NOT: Uygulama daha önce iban sütunu olmadan kurulmuş olabilir; CREATE TABLE IF NOT EXISTS
+        # bu durumda sütunu eklemez. Var olan veritabanlarını bozmadan güvenle tamamlıyoruz.
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+        if "iban" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN iban TEXT")

@@ -167,6 +167,8 @@ async def build(request:Request):
             if recognized:is_bracket_template=True
         if is_bracket_template:
             # Kendi şablonu / köşeli parantez sistemi: sabit etiket motoru yerine [alan] değişimi kullanılır.
+            # [iban] belgeyi oluşturan kullanıcının kendi profilinden (Profilim ekranı) otomatik gelir.
+            values["_userIban"]=u["iban"] or ""
             new=fill_custom_template(old,values,respondents)
             xml=update_offsets(xml,old,new)
             result=build_udf(files,xml,old,new)
