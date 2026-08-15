@@ -25,13 +25,12 @@ def _row_to_dict(row) -> Optional[dict]:
 
 class SQLiteUserRepository(UserRepository):
     def create(self, user: dict) -> dict:
+        user = dict(user)
+        user.setdefault("id", str(uuid4()))
+        cols = ",".join(user.keys())
+        placeholders = ",".join("?" for _ in user)
         with connect() as c:
-            c.execute("""INSERT INTO users
-                (id,email,display_name,password_hash,status,plan_id,is_super_admin,created_at,iban)
-                VALUES(?,?,?,?,?,?,?,?,?)""",
-                (user["id"], user["email"], user["display_name"], user["password_hash"],
-                 user.get("status", "pending"), user.get("plan_id", "free"),
-                 int(user.get("is_super_admin", 0)), user["created_at"], user.get("iban")))
+            c.execute(f"INSERT INTO users ({cols}) VALUES ({placeholders})", tuple(user.values()))
         return self.get(user["id"])
 
     def get(self, user_id: str) -> Optional[dict]:

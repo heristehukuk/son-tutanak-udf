@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from app.database import init_db, connect
+from app.database_layer import repos
 from app.auth.routes import router as auth_router
 from app.files.routes import router as files_router
 from app.admin.routes import router as admin_router
@@ -54,13 +55,11 @@ def ocr_environment():
 def bootstrap_admin():
     email=os.getenv("ADMIN_EMAIL"); password=os.getenv("ADMIN_PASSWORD")
     if not email or not password:return
-    with connect() as c:
-        if c.execute("SELECT id FROM users WHERE email=?",(email.lower(),)).fetchone():return
-        import uuid
-        c.execute("""INSERT INTO users
-        (id,email,display_name,password_hash,status,plan_id,is_super_admin,created_at)
-        VALUES(?,?,?,?,?,?,?,?)""",
-        (str(uuid.uuid4()),email.lower(),"Super Admin",hash_password(password),"active","pro",1,now().isoformat()))
+    if repos.users.get_by_email(email.lower()):return
+    import uuid
+    repos.users.create({"id":str(uuid.uuid4()),"email":email.lower(),"display_name":"Super Admin",
+        "password_hash":hash_password(password),"status":"active","plan_id":"pro",
+        "is_super_admin":1,"created_at":now().isoformat()})
 
 def current_user(request):
     return get_user_by_session(request.cookies.get("session"))

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from app.auth.service import get_user_by_session, now
 from app.database import connect
+from app.database_layer import repos
 from app.web import page
 from app.customtemplates.service import list_all_templates
 from app.feepusula.service import list_tariffs, add_tariff, delete_tariff, CATEGORY_LABELS
@@ -96,9 +97,7 @@ async def download_template(request:Request,template_id:str):
 @router.post("/users/{user_id}/status")
 async def status(request:Request,user_id:str,status:str=Form(...)):
     if not admin(request):return HTMLResponse("Yetkisiz.",403)
-    with connect() as c:
-        c.execute("UPDATE users SET status=?,approved_at=? WHERE id=?",
-                  (status,now().isoformat() if status=="active" else None,user_id))
+    repos.users.update(user_id,{"status":status,"approved_at":now().isoformat() if status=="active" else None})
     return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
 
 @router.get("/documents/{doc_id}")

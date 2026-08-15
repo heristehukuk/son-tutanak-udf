@@ -4,7 +4,7 @@ from html import escape
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from app.auth.service import create_user, authenticate, create_session, delete_session, get_user_by_session
-from app.database import connect
+from app.database_layer import repos
 from app.web import page
 
 router = APIRouter()
@@ -73,7 +73,6 @@ async def update_profile(request: Request, iban: str = Form("")):
         return page("Profilim", '<div class="card narrow"><p class="err">Geçersiz IBAN. '
                     'Türkiye IBAN\'ları "TR" ile başlamalı ve TR dahil toplam 26 karakter olmalıdır.</p>'
                     '<a href="/auth/profile"><button>Geri Dön</button></a></div>', 400)
-    with connect() as c:
-        c.execute("UPDATE users SET iban=? WHERE id=?", (clean or None, u["id"]))
+    repos.users.update(u["id"], {"iban": clean or None})
     return page("Profilim", '<div class="card narrow"><p class="ok">IBAN kaydedildi.</p>'
                 '<a href="/"><button>Ana Sayfa</button></a></div>')
