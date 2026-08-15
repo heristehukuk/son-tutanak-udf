@@ -127,6 +127,8 @@ async function addCase(){
     params.set("applicant_name",document.getElementById("applicantName").value.trim());
     params.set("file_type",document.getElementById("fileType").value.trim());
     params.set("start_date",document.getElementById("startDate").value);
+    if(window.editorCaseId) params.set("case_id",window.editorCaseId);
+    if(window.editorCaseData) params.set("case_data",JSON.stringify(window.editorCaseData));
 
     try{
         const response=await fetch("/calendar/calculate",{
@@ -218,15 +220,15 @@ function fillFromEditor(){
     const applicant=params.get("applicant_name");
     const fileType=params.get("file_type");
     const startDate=params.get("start_date");
+    window.editorCaseId=params.get("case_id")||"";
+    try{window.editorCaseData=JSON.parse(params.get("case_data")||"{}");}catch(e){window.editorCaseData={};}
 
     if(caseNo) document.getElementById("caseNo").value=caseNo;
     if(applicant) document.getElementById("applicantName").value=applicant;
     if(fileType) document.getElementById("fileType").value=fileType;
     if(startDate) document.getElementById("startDate").value=startDate;
 
-    if(caseNo&&applicant&&fileType&&startDate){
-        calculateDeadline();
-    }
+    if(caseNo&&applicant&&fileType&&startDate){ calculateDeadline(); }
 }
 
 async function initCalendar(){

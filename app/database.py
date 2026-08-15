@@ -40,7 +40,7 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS cases (
             id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            file_no TEXT, application_no TEXT, title TEXT, file_type TEXT, start_date TEXT, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            file_no TEXT, application_no TEXT, title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL,
@@ -85,38 +85,18 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT, action TEXT NOT NULL,
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
         );
-
-        CREATE TABLE IF NOT EXISTS task_templates (
-            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            task_key TEXT NOT NULL, title TEXT NOT NULL, offset_days INTEGER NOT NULL DEFAULT 0,
-            priority TEXT NOT NULL DEFAULT 'normal', sort_order INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-            UNIQUE(owner_id, task_key)
-        );
-        CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE, task_key TEXT,
-            title TEXT NOT NULL, description TEXT, due_date TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'normal',
-            is_standard INTEGER NOT NULL DEFAULT 1, is_custom INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, cancelled_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_tasks_owner_case ON tasks(owner_id, case_id);
-        CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(owner_id, due_date, status);
-        CREATE TABLE IF NOT EXISTS task_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-            actor_id TEXT REFERENCES users(id) ON DELETE SET NULL, action TEXT NOT NULL, old_value TEXT, new_value TEXT, created_at TEXT NOT NULL
-        );
         """)
         # NOT: Uygulama daha önce iban sütunu olmadan kurulmuş olabilir; CREATE TABLE IF NOT EXISTS
         # bu durumda sütunu eklemez. Var olan veritabanlarını bozmadan güvenle tamamlıyoruz.
         case_cols = [r["name"] for r in c.execute("PRAGMA table_info(cases)").fetchall()]
         if "file_type" not in case_cols:
             c.execute("ALTER TABLE cases ADD COLUMN file_type TEXT")
-        if "start_date" not in case_cols:
-            c.execute("ALTER TABLE cases ADD COLUMN start_date TEXT")
         if "status" not in case_cols:
             c.execute("ALTER TABLE cases ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
+        if "start_date" not in case_cols:
+            c.execute("ALTER TABLE cases ADD COLUMN start_date TEXT")
+        if "case_data_json" not in case_cols:
+            c.execute("ALTER TABLE cases ADD COLUMN case_data_json TEXT")
 
         cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
         if "iban" not in cols:

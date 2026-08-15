@@ -1056,6 +1056,16 @@ params.set('applicant_name',applicant);
 params.set('file_type',fileType);
 params.set('start_date',startDate);
 
+// Mevcut dosyanın sistem kimliğini ve bilgi havuzunun tamamını takvime taşı.
+const caseId=getValue('case_id');
+if(caseId) params.set('case_id',caseId);
+const caseData={};
+form.querySelectorAll('[name]').forEach(el=>{
+    if(el.type==='file' || !el.name || el.name==='case_id' || el.name==='locked' || el.name==='locked_resp') return;
+    if(el.name.startsWith('resp_') || ['basvuruNo','dosyaNo','arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','basvurucuTarafTuru','basvurucuVergiNo','basvurucuTcKimlik','basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta','dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc','gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'].includes(el.name)) caseData[el.name]=el.value;
+});
+params.set('case_data',JSON.stringify(caseData));
+
 window.location.href='/calendar?'+params.toString();
 }
 

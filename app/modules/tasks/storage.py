@@ -59,8 +59,12 @@ def ensure_schema():
         cols = {r["name"] for r in c.execute("PRAGMA table_info(cases)").fetchall()}
         if "file_type" not in cols:
             c.execute("ALTER TABLE cases ADD COLUMN file_type TEXT")
+        if "status" not in cols:
+            c.execute("ALTER TABLE cases ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
         if "start_date" not in cols:
             c.execute("ALTER TABLE cases ADD COLUMN start_date TEXT")
+        if "case_data_json" not in cols:
+            c.execute("ALTER TABLE cases ADD COLUMN case_data_json TEXT")
 
 
 def seed_user_templates(owner_id):
@@ -83,20 +87,31 @@ def get_case(owner_id, case_id):
         return c.execute("SELECT * FROM cases WHERE id=? AND owner_id=?", (case_id, owner_id)).fetchone()
 
 
-def update_case_info(owner_id, case_id, file_no=None, applicant_name=None, file_type=None, start_date=None, status=None):
+def update_case_info(owner_id, case_id, file_no=None, applicant_name=None, file_type=None, start_date=None, status=None, case_data=None):
     ensure_schema()
     with connect() as c:
         row = c.execute("SELECT * FROM cases WHERE id=? AND owner_id=?", (case_id, owner_id)).fetchone()
         if not row:
             return None
-        c.execute("""UPDATE cases SET file_no=?, title=?, file_type=?, start_date=?, status=?, updated_at=?
+        current_json = row["case_data_json"] if "case_data_json" in row.keys() else None
+        merged_json = current_json
+        if case_data is not None:
+            merged = {}
+            try:
+                merged = json.loads(current_json) if current_json else {}
+            except Exception:
+                merged = {}
+            if isinstance(case_data, dict):
+                merged.update(case_data)
+            merged_json = json.dumps(merged, ensure_ascii=False)
+        c.execute("""UPDATE cases SET file_no=?, title=?, file_type=?, start_date=?, status=?, case_data_json=?, updated_at=?
                      WHERE id=? AND owner_id=?""",
                   (file_no if file_no is not None else row["file_no"],
                    applicant_name if applicant_name is not None else row["title"],
                    file_type if file_type is not None else row["file_type"],
                    start_date if start_date is not None else row["start_date"],
                    status if status is not None else row["status"],
-                   now_iso(), case_id, owner_id))
+                   merged_json, now_iso(), case_id, owner_id))
         return c.execute("SELECT * FROM cases WHERE id=? AND owner_id=?", (case_id, owner_id)).fetchone()
 
 
@@ -269,6 +284,30 @@ def history(owner_id, task_id):
         if not ok:return []
         return c.execute("SELECT * FROM task_history WHERE task_id=? ORDER BY created_at DESC,id DESC",(task_id,)).fetchall()
 
+
+def document_checklist(owner_id, case_id):
+    """Detect generated documents belonging to a case by their stored template name/path."""
+    ensure_schema()
+    with connect() as c:
+        rows = c.execute("""SELECT id, original_template, stored_path, created_at
+                           FROM generated_documents
+                           WHERE case_id=? AND owner_id=?
+                           ORDER BY created_at DESC""", (case_id, owner_id)).fetchall()
+    checks = [
+        ("son_tutanak", "Son Tutanak", ["son tutanak", "son_tutanak", "anlaşma son", "anlasma son", "anlaşmama son", "anlasmama son"]),
+        ("davet_mektubu", "Davet Mektubu", ["davet mektubu", "davet_mektubu", "davet"]),
+        ("ucret_pusulasi", "Ücret Pusulası", ["ücret pusulası", "ucret pusulasi", "ucret_pusulasi", "ücret_pusulası", "pusula"]),
+        ("ust_yazi", "Üst Yazı", ["üst yazı", "ust yazi", "üst_yazı", "ust_yazi"]),
+    ]
+    out=[]
+    for key,title,terms in checks:
+        match=None
+        for row in rows:
+            hay=(str(row["original_template"] or "")+" "+str(row["stored_path"] or "")).casefold()
+            if any(term.casefold() in hay for term in terms):
+                match=dict(row); break
+        out.append({"key":key,"title":title,"created":bool(match),"document":match})
+    return out
 
 def global_stats(owner_id):
     ensure_schema()
