@@ -1,7 +1,7 @@
 from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Form
 from fastapi.responses import HTMLResponse
 
 from .service import CalendarService
@@ -54,10 +54,10 @@ def calendar_page():
 
 @router.post("/calculate")
 def calculate_calendar(
-    case_no: str,
-    applicant_name: str,
-    file_type: str,
-    start_date: date,
+    case_no: str = Form(...),
+    applicant_name: str = Form(...),
+    file_type: str = Form(...),
+    start_date: date = Form(...),
 ):
 
     try:
