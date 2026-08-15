@@ -22,21 +22,19 @@ def supabase_health() -> dict:
     try:
         client = get_supabase()
 
-        # Supabase REST bağlantısını test ediyoruz.
-        response = client.table("plans").select("*").limit(1).execute()
+        response = (
+            client
+            .table("plans")
+            .select("id")
+            .limit(1)
+            .execute()
+        )
 
         return {
             "connected": True,
             "query_ok": True,
             "rows": len(response.data or []),
         }
-
-    except Exception as exc:
-        return {
-            "connected": False,
-            "query_ok": False,
-            "error": str(exc),
-        }        }
 
     except Exception as exc:
         return {
