@@ -1,7 +1,10 @@
 
+import re
+from html import escape
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from app.auth.service import create_user, authenticate, create_session, delete_session
+from app.auth.service import create_user, authenticate, create_session, delete_session, get_user_by_session
+from app.database import connect
 from app.web import page
 
 router = APIRouter()
@@ -48,3 +51,29 @@ async def logout(request: Request):
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie("session")
     return response
+
+@router.get("/profile", response_class=HTMLResponse)
+async def profile_page(request: Request):
+    u = get_user_by_session(request.cookies.get("session"))
+    if not u: return RedirectResponse("/auth/login", 303)
+    current = escape(u["iban"] or "", quote=True)
+    return page("Profilim", f"""<div class="card narrow"><h1>Profilim</h1>
+    <p class="hint">Buraya girdiğiniz IBAN, kendi oluşturduğunuz belgelerde şablonda <code>[iban]</code>
+    yazan yerlere otomatik olarak yazılır. Her belgede tekrar girmenize gerek kalmaz.</p>
+    <form method="post" action="/auth/profile">
+    <label>IBAN</label><input name="iban" value="{current}" placeholder="TR__ ____ ____ ____ ____ ____ __">
+    <button>Kaydet</button></form></div>""")
+
+@router.post("/profile")
+async def update_profile(request: Request, iban: str = Form("")):
+    u = get_user_by_session(request.cookies.get("session"))
+    if not u: return RedirectResponse("/auth/login", 303)
+    clean = re.sub(r"\s+", "", iban or "").upper()
+    if clean and not re.fullmatch(r"TR\d{24}", clean):
+        return page("Profilim", '<div class="card narrow"><p class="err">Geçersiz IBAN. '
+                    'Türkiye IBAN\'ları "TR" ile başlamalı ve TR dahil toplam 26 karakter olmalıdır.</p>'
+                    '<a href="/auth/profile"><button>Geri Dön</button></a></div>', 400)
+    with connect() as c:
+        c.execute("UPDATE users SET iban=? WHERE id=?", (clean or None, u["id"]))
+    return page("Profilim", '<div class="card narrow"><p class="ok">IBAN kaydedildi.</p>'
+                '<a href="/"><button>Ana Sayfa</button></a></div>')

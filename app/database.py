@@ -81,6 +81,11 @@ def init_db():
             stored_path TEXT NOT NULL, recognized_json TEXT NOT NULL, unrecognized_json TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS fee_tariffs (
+            id TEXT PRIMARY KEY, category TEXT NOT NULL, category_label TEXT NOT NULL,
+            min_parties INTEGER NOT NULL, max_parties INTEGER,
+            unit_price REAL NOT NULL, year INTEGER NOT NULL, updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT, action TEXT NOT NULL,
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
@@ -88,16 +93,6 @@ def init_db():
         """)
         # NOT: Uygulama daha önce iban sütunu olmadan kurulmuş olabilir; CREATE TABLE IF NOT EXISTS
         # bu durumda sütunu eklemez. Var olan veritabanlarını bozmadan güvenle tamamlıyoruz.
-        case_cols = [r["name"] for r in c.execute("PRAGMA table_info(cases)").fetchall()]
-        if "file_type" not in case_cols:
-            c.execute("ALTER TABLE cases ADD COLUMN file_type TEXT")
-        if "status" not in case_cols:
-            c.execute("ALTER TABLE cases ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
-        if "start_date" not in case_cols:
-            c.execute("ALTER TABLE cases ADD COLUMN start_date TEXT")
-        if "case_data_json" not in case_cols:
-            c.execute("ALTER TABLE cases ADD COLUMN case_data_json TEXT")
-
         cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
         if "iban" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN iban TEXT")

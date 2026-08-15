@@ -19,6 +19,7 @@ FIELDS=[
 ('dosyaTuru','Dosya Türü'),('uyusmazlik','Arabuluculuk Konusu Uyuşmazlık'),('uyusmazlikTuru','Uyuşmazlık Türü'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
+('daireBilgisi','Dairesi (Harcama Pusulası için, örn. ANKARA CUMHURİYET BAŞSAVCILIĞI)'),
 ('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi')]
 LABELS=dict(FIELDS)
 LABELS['_userIban']='Arabulucu IBAN (kullanıcı profilinden, otomatik)'
@@ -950,7 +951,8 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
             ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
-            ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
+            ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi']),
+            ('Harcama Pusulası',['daireBilgisi'])]
     # Belgeye hangi alanın esas alındığını netleştiren kısa ipuçları.
     HINTS={
         'dosyaTuru':'Son tutanağa "Arabuluculuk Konusu Uyuşmazlık" olarak esas bu alan yazılır.',
@@ -1017,58 +1019,10 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     options+=''.join(f'<option value="tpl_{escape(t["id"])}">{escape(t["name"])} (Kendi Şablonum)</option>' for t in (custom_templates or []))
     msg=f'<div class="ok">{escape(message)}</div>' if message else ''
     html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>
-*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.calendar-btn{background:#0f766e;margin-right:8px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
-</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="button" class="calendar-btn" onclick="openCalendarFromForm()">📅 Takvime Aktar</button><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
+*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
+</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Harcama Pusulası</h2><p class="hint">Bu ekrandaki Dosya Türü, Karşı Taraflar ve Arabulucu bilgilerini kullanarak, IBAN'ınızı (Profilim) da ekleyerek Harcama Pusulası üretir.</p><button type="submit" formaction="/harcama-pusulasi/build" class="secondary">📄 Harcama Pusulası Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
 let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Taraf Türü</label><select name="resp_'+i+'_type"><option value="kisi">Kişi</option><option value="kurum">Kurum / Şirket</option></select></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Vergi No</label><input name="resp_'+i+'_tax"></div><div class="party"><label>Adı Soyadı / Unvanı</label><input name="resp_'+i+'_name"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
 function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
-function openCalendarFromForm(){
-const form=document.getElementById('mainform');
-if(!form){alert('Form bulunamadı.');return;}
-
-const getValue=(name)=>{
-const el=form.querySelector('[name="'+name+'"]');
-return el ? el.value.trim() : '';
-};
-
-const caseNo=getValue('dosyaNo');
-const applicant=getValue('basvurucuAdiSoyadi');
-const fileType=getValue('dosyaTuru');
-const startDateRaw=getValue('baslangicTarihi');
-
-if(!caseNo){alert('Dosya No henüz girilmemiş.');return;}
-if(!applicant){alert('Başvurucu Adı Soyadı / Ünvanı henüz girilmemiş.');return;}
-if(!fileType){alert('Dosya Türü henüz girilmemiş.');return;}
-if(!startDateRaw){alert('Süreç Başlangıç Tarihi henüz girilmemiş.');return;}
-
-let startDate=startDateRaw;
-const match=startDateRaw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
-
-if(match){
-const day=match[1].padStart(2,'0');
-const month=match[2].padStart(2,'0');
-const year=match[3];
-startDate=year+'-'+month+'-'+day;
-}
-
-const params=new URLSearchParams();
-params.set('case_no',caseNo);
-params.set('applicant_name',applicant);
-params.set('file_type',fileType);
-params.set('start_date',startDate);
-
-// Mevcut dosyanın sistem kimliğini ve bilgi havuzunun tamamını takvime taşı.
-const caseId=getValue('case_id');
-if(caseId) params.set('case_id',caseId);
-const caseData={};
-form.querySelectorAll('[name]').forEach(el=>{
-    if(el.type==='file' || !el.name || el.name==='case_id' || el.name==='locked' || el.name==='locked_resp') return;
-    if(el.name.startsWith('resp_') || ['basvuruNo','dosyaNo','arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','basvurucuTarafTuru','basvurucuVergiNo','basvurucuTcKimlik','basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta','dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc','gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'].includes(el.name)) caseData[el.name]=el.value;
-});
-params.set('case_data',JSON.stringify(caseData));
-
-window.location.href='/calendar?'+params.toString();
-}
-
 function toggleMeeting(){const s=document.querySelector('select[name=gorusmeSekli]');const f=document.querySelector('textarea[name=gorusmeAdresi]');if(!s||!f)return;f.parentElement.style.display=s.value==='Yüz yüze'?'block':'none';}document.addEventListener('change',e=>{if(e.target.name==='gorusmeSekli')toggleMeeting()});document.addEventListener('DOMContentLoaded',toggleMeeting);</script></body></html>'''
     return html.replace('__FILENAME__',escape(filename)).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
 
