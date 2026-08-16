@@ -61,6 +61,4 @@ class Repositories:
 
 
 # Tek, paylaşılan örnek (singleton).
-repos = Repositories(_BACKEND)# Tek, paylaşılan örnek (singleton). İleride Supabase'e geçerken burada bir
-# if/else (ortam değişkenine göre) eklenecek - başka hiçbir dosya değişmeyecek.
-repos = Repositories()
+repos = Repositories(_BACKEND)
