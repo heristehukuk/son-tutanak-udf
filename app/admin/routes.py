@@ -17,11 +17,8 @@ def admin(request):
 @router.get("/",response_class=HTMLResponse)
 async def dashboard(request:Request):
     if not admin(request):return HTMLResponse("Yetkisiz.",403)
-    with connect() as c:
-        users=c.execute("""SELECT id,email,display_name,status,plan_id,created_at,last_ip
-                           FROM users ORDER BY created_at DESC""").fetchall()
-        docs=c.execute("""SELECT d.*,u.email FROM documents d JOIN users u ON u.id=d.owner_id
-                          ORDER BY d.created_at DESC""").fetchall()
+    users=repos.users.list_all()
+    docs=repos.documents.list_all_with_owner_email()
     us=[]
     for r in users:
         us.append(
@@ -90,7 +87,7 @@ async def remove_tariff_row(request:Request,tariff_id:str):
 @router.get("/templates/{template_id}")
 async def download_template(request:Request,template_id:str):
     if not admin(request):return HTMLResponse("Yetkisiz.",403)
-    with connect() as c:r=c.execute("SELECT * FROM custom_templates WHERE id=?",(template_id,)).fetchone()
+    r=repos.templates.get(template_id)
     if not r:return HTMLResponse("Şablon bulunamadı.",404)
     return FileResponse(r["stored_path"],filename=r["name"]+".udf")
 
@@ -103,6 +100,6 @@ async def status(request:Request,user_id:str,status:str=Form(...)):
 @router.get("/documents/{doc_id}")
 async def download_document(request:Request,doc_id:str):
     if not admin(request):return HTMLResponse("Yetkisiz.",403)
-    with connect() as c:r=c.execute("SELECT * FROM documents WHERE id=?",(doc_id,)).fetchone()
+    r=repos.documents.get(doc_id)
     if not r:return HTMLResponse("Belge bulunamadı.",404)
     return FileResponse(r["stored_path"],filename=r["original_name"])

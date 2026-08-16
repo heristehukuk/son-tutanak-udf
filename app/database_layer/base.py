@@ -68,6 +68,11 @@ class DocumentRepository(ABC):
     @abstractmethod
     def list_by_owner(self, owner_id: str) -> list[dict]: ...
 
+    @abstractmethod
+    def list_all_with_owner_email(self) -> list[dict]:
+        """Admin paneli için: her belgeyi sahibinin e-postasıyla birlikte döner."""
+        ...
+
 
 class GeneratedDocumentRepository(ABC):
     @abstractmethod
@@ -100,6 +105,30 @@ class MessageRepository(ABC):
 
     @abstractmethod
     def list_for_user(self, user_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def list_inbox_with_sender_name(self, recipient_id: str) -> list[dict]:
+        """Gelen kutusu: her mesajı gönderenin adıyla birlikte döner."""
+        ...
+
+
+class PlanRepository(ABC):
+    @abstractmethod
+    def seed_defaults(self, plans: list[dict]) -> None: ...
+
+    @abstractmethod
+    def get(self, plan_id: str) -> Optional[dict]: ...
+
+    @abstractmethod
+    def list_all(self) -> list[dict]: ...
+
+
+class UsageRepository(ABC):
+    @abstractmethod
+    def sum_amount(self, user_id: str, metric: str, period: str) -> int: ...
+
+    @abstractmethod
+    def record(self, usage: dict) -> dict: ...
 
 
 class TariffRepository(ABC):

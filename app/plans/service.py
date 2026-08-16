@@ -1,6 +1,6 @@
 
 import json
-from app.database import connect
+from app.database_layer import repos
 from app.auth.service import now
 
 DEFAULT_PLANS = {
@@ -17,16 +17,13 @@ DEFAULT_PLANS = {
 }
 
 def seed_plans():
-    with connect() as c:
-        for pid,p in DEFAULT_PLANS.items():
-            c.execute("""INSERT OR IGNORE INTO plans
-            (id,name,price_monthly,features_json,limits_json) VALUES(?,?,?,?,?)""",
-            (pid,p["name"],p["price_monthly"],json.dumps(p["features"],ensure_ascii=False),
-             json.dumps(p["limits"],ensure_ascii=False)))
+    plans=[{"id":pid,"name":p["name"],"price_monthly":p["price_monthly"],
+            "features_json":json.dumps(p["features"],ensure_ascii=False),
+            "limits_json":json.dumps(p["limits"],ensure_ascii=False)} for pid,p in DEFAULT_PLANS.items()]
+    repos.plans.seed_defaults(plans)
 
 def get_plan(plan_id):
-    with connect() as c:
-        r=c.execute("SELECT * FROM plans WHERE id=?",(plan_id,)).fetchone()
+    r=repos.plans.get(plan_id)
     if not r:return None
     return {"id":r["id"],"name":r["name"],"price_monthly":r["price_monthly"],
             "features":json.loads(r["features_json"]),"limits":json.loads(r["limits_json"])}
@@ -35,15 +32,10 @@ def feature_enabled(plan, feature):
     return bool(plan and plan["features"].get(feature,False))
 
 def current_usage(user_id, metric, period):
-    with connect() as c:
-        r=c.execute("SELECT COALESCE(SUM(amount),0) n FROM usage WHERE user_id=? AND metric=? AND period=?",
-                    (user_id,metric,period)).fetchone()
-    return int(r["n"])
+    return repos.usage.sum_amount(user_id, metric, period)
 
 def consume(user_id, metric, limit, amount=1):
     period=now().strftime("%Y-%m")
     if limit is not None and current_usage(user_id,metric,period)+amount>limit:return False
-    with connect() as c:
-        c.execute("INSERT INTO usage(user_id,metric,amount,period,created_at) VALUES(?,?,?,?,?)",
-                  (user_id,metric,amount,period,now().isoformat()))
+    repos.usage.record({"user_id":user_id,"metric":metric,"amount":amount,"period":period,"created_at":now().isoformat()})
     return True

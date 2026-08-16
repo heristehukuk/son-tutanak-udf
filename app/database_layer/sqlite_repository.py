@@ -15,7 +15,7 @@ from app.database import connect
 from app.database_layer.base import (
     UserRepository, SessionRepository, CaseRepository, DocumentRepository,
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
-    TariffRepository, AuditRepository,
+    TariffRepository, AuditRepository, PlanRepository, UsageRepository,
 )
 
 
@@ -124,6 +124,12 @@ class SQLiteDocumentRepository(DocumentRepository):
             rows = c.execute("SELECT * FROM documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def list_all_with_owner_email(self) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("""SELECT d.*,u.email FROM documents d JOIN users u ON u.id=d.owner_id
+                ORDER BY d.created_at DESC""").fetchall()
+        return [dict(r) for r in rows]
+
 
 class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
     def create(self, document: dict) -> dict:
@@ -195,6 +201,49 @@ class SQLiteMessageRepository(MessageRepository):
             rows = c.execute("""SELECT * FROM messages WHERE sender_id=? OR recipient_id=?
                 ORDER BY created_at DESC""", (user_id, user_id)).fetchall()
         return [dict(r) for r in rows]
+
+    def list_inbox_with_sender_name(self, recipient_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("""SELECT m.*,u.display_name FROM messages m JOIN users u ON u.id=m.sender_id
+                WHERE m.recipient_id=? ORDER BY m.created_at DESC""", (recipient_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLitePlanRepository(PlanRepository):
+    def seed_defaults(self, plans: list[dict]) -> None:
+        with connect() as c:
+            for p in plans:
+                c.execute("""INSERT OR IGNORE INTO plans
+                    (id,name,price_monthly,features_json,limits_json) VALUES(?,?,?,?,?)""",
+                    (p["id"], p["name"], p["price_monthly"], p["features_json"], p["limits_json"]))
+
+    def get(self, plan_id: str) -> Optional[dict]:
+        with connect() as c:
+            row = c.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+        return _row_to_dict(row)
+
+    def list_all(self) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM plans ORDER BY price_monthly,id").fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLiteUsageRepository(UsageRepository):
+    def sum_amount(self, user_id: str, metric: str, period: str) -> int:
+        with connect() as c:
+            row = c.execute("""SELECT COALESCE(SUM(amount),0) n FROM usage
+                WHERE user_id=? AND metric=? AND period=?""", (user_id, metric, period)).fetchone()
+        return int(row["n"])
+
+    def record(self, usage: dict) -> dict:
+        with connect() as c:
+            cur = c.execute("""INSERT INTO usage(user_id,metric,amount,period,created_at)
+                VALUES(?,?,?,?,?)""",
+                (usage["user_id"], usage["metric"], usage["amount"], usage["period"], usage["created_at"]))
+            rid = cur.lastrowid
+        with connect() as c:
+            row = c.execute("SELECT * FROM usage WHERE id=?", (rid,)).fetchone()
+        return _row_to_dict(row)
 
 
 class SQLiteTariffRepository(TariffRepository):

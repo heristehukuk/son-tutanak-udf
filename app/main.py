@@ -196,11 +196,10 @@ async def build(request:Request):
         cid=str(form.get("case_id") or "")
         if cid:
             save_generated(u["id"],cid,result,TEMPLATES.get(choice,("Özel Son Tutanak","",""))[0])
-            with connect() as c:
-                c.execute("""UPDATE cases SET file_no=?,application_no=?,title=?,updated_at=?
-                             WHERE id=? AND owner_id=?""",
-                          (values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Dosya",
-                           now().isoformat(),cid,u["id"]))
+            case=repos.cases.get(cid)
+            if case and case["owner_id"]==u["id"]:
+                repos.cases.update(cid,{"file_no":values.get("dosyaNo"),"application_no":values.get("basvuruNo"),
+                                        "title":values.get("basvurucuAdiSoyadi") or "Dosya","updated_at":now().isoformat()})
         name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+"_hazir.udf"
         ascii_fallback=re.sub(r'[^A-Za-z0-9_.-]','_',name) or "son_tutanak_hazir.udf"
         quoted=urllib.parse.quote(name)

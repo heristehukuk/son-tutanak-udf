@@ -3,7 +3,7 @@ import re, io
 from uuid import uuid4
 from pathlib import Path
 from openpyxl import load_workbook
-from app.database import connect
+from app.database_layer import repos
 from app.auth.service import now
 from app.documents.engine import turkce_sayi_yazi
 
@@ -37,16 +37,8 @@ def detect_category(dosya_turu_text):
 def lookup_unit_price(category, taraf_sayisi, year=None):
     """fee_tariffs tablosundan kategori + taraf sayısına uyan birim fiyatı bulur.
     Bulunamazsa None döner (admin panelinden tarife eklenmesi gerekir)."""
-    with connect() as c:
-        if year:
-            rows = c.execute("SELECT * FROM fee_tariffs WHERE category=? AND year=?", (category, year)).fetchall()
-        else:
-            rows = c.execute("""SELECT * FROM fee_tariffs WHERE category=? AND year=(SELECT MAX(year) FROM fee_tariffs WHERE category=?)""",
-                              (category, category)).fetchall()
-    for r in rows:
-        if r["min_parties"] <= taraf_sayisi and (r["max_parties"] is None or taraf_sayisi <= r["max_parties"]):
-            return r["unit_price"]
-    return None
+    found = repos.tariffs.find_matching(category, taraf_sayisi, year)
+    return found["unit_price"] if found else None
 
 def _tr_title(s):
     """Python'un .title()'ı Türkçe İ/I kuralını bilmez (örn. 'iki' -> 'Iki' yanlış, 'İki' doğru).
@@ -101,26 +93,21 @@ def build_harcama_pusulasi(*, daire, dosya_turu_text, dosya_no, taraf_sayisi, ar
 
 # --- Admin: tarife tablosu yönetimi ---
 def list_tariffs():
-    with connect() as c:
-        rows = c.execute("SELECT * FROM fee_tariffs ORDER BY year DESC, category, min_parties").fetchall()
-    return [dict(r) for r in rows]
+    return repos.tariffs.list_all()
 
 def add_tariff(category, min_parties, max_parties, unit_price, year):
-    with connect() as c:
-        c.execute("""INSERT INTO fee_tariffs (id,category,category_label,min_parties,max_parties,unit_price,year,updated_at)
-        VALUES(?,?,?,?,?,?,?,?)""",
-        (str(uuid4()), category, CATEGORY_LABELS.get(category, category), min_parties,
-         max_parties, unit_price, year, now().isoformat()))
+    repos.tariffs.create({
+        "category":category,"category_label":CATEGORY_LABELS.get(category,category),
+        "min_parties":min_parties,"max_parties":max_parties,"unit_price":unit_price,
+        "year":year,"updated_at":now().isoformat(),
+    })
 
 def delete_tariff(tariff_id):
-    with connect() as c:
-        c.execute("DELETE FROM fee_tariffs WHERE id=?", (tariff_id,))
+    repos.tariffs.delete(tariff_id)
 
 def seed_known_tariffs():
     """Şu ana kadar doğrulanmış örnek rakamları (kullanıcının verdiği örnek pusulalardan) tohumlar.
     Tabloda hiç satır yoksa çalışır; tam resmi tarife Excel'i yüklenince admin panelinden tamamlanmalı."""
-    with connect() as c:
-        n = c.execute("SELECT COUNT(*) AS n FROM fee_tariffs").fetchone()["n"]
-    if n: return
+    if repos.tariffs.list_all(): return
     add_tariff("kira", 2, 2, 4680, 2026)
     add_tariff("ticari", 3, 3, 6400, 2026)

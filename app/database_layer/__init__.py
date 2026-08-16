@@ -15,6 +15,7 @@ from app.database_layer.sqlite_repository import (
     SQLiteUserRepository, SQLiteSessionRepository, SQLiteCaseRepository,
     SQLiteDocumentRepository, SQLiteGeneratedDocumentRepository, SQLiteTemplateRepository,
     SQLiteMessageRepository, SQLiteTariffRepository, SQLiteAuditRepository,
+    SQLitePlanRepository, SQLiteUsageRepository,
 )
 
 
@@ -29,6 +30,8 @@ class Repositories:
         self.messages = SQLiteMessageRepository()
         self.tariffs = SQLiteTariffRepository()
         self.audit = SQLiteAuditRepository()
+        self.plans = SQLitePlanRepository()
+        self.usage = SQLiteUsageRepository()
 
 
 # Tek, paylaşılan örnek (singleton). İleride Supabase'e geçerken burada bir
