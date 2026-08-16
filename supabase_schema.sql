@@ -135,6 +135,49 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at  TEXT NOT NULL
 );
 
+-- =====================================================================
+-- Anket modulu tablolari (surveys, survey_questions, survey_answers)
+--
+-- NOT: Bu tablolar olusturuldu, ama app/surveys/routes.py henuz bunlara
+-- hic dokunmuyor (su an sadece sabit bir bilgi sayfasi gosteriyor).
+-- Aneti gercekten aktif etmek icin ayrica su kod parcalarinin
+-- yazilmasi gerekiyor:
+--   1) app/database_layer/base.py    -> SurveyRepository arayuzu
+--   2) app/database_layer/sqlite_repository.py -> SQLite implementasyonu
+--   3) app/database_layer/supabase_repository.py -> Supabase implementasyonu
+--   4) app/database_layer/__init__.py -> factory'ye ekleme
+--   5) app/surveys/routes.py -> gercek liste/cevap-kaydetme/sonuc mantigi
+-- Bu adimlari Render kurulumundan sonra birlikte yapacagiz.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS surveys (
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    description  TEXT,
+    active       INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS survey_questions (
+    id         TEXT PRIMARY KEY,
+    survey_id  TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    question   TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'text'
+);
+
+CREATE TABLE IF NOT EXISTS survey_answers (
+    id           TEXT PRIMARY KEY,
+    survey_id    TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    question_id  TEXT NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    answer       TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_survey_questions_survey_id ON survey_questions(survey_id);
+CREATE INDEX IF NOT EXISTS idx_survey_answers_survey_id ON survey_answers(survey_id);
+CREATE INDEX IF NOT EXISTS idx_survey_answers_user_id ON survey_answers(user_id);
+
 -- Faydali indeksler (opsiyonel ama onerilir)
 CREATE INDEX IF NOT EXISTS idx_cases_owner_id ON cases(owner_id);
 CREATE INDEX IF NOT EXISTS idx_documents_owner_id ON documents(owner_id);
