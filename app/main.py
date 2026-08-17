@@ -136,6 +136,39 @@ async def edit(request:Request,file:UploadFile=File(...)):
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge okunamadı: {e}",400)
 
+@app.post("/case/schedule")
+async def schedule_case(request:Request):
+    """Bilgi Havuzu ekranındaki '📅 Takvime Ekle / Görevleri Oluştur' butonu.
+    Ayrı bir 'yeni dosya' formu DEĞİL - bu ekrandaki mevcut case_id'yi kullanır,
+    böylece aynı dosya için ikinci bir kayıt (mükerrer dosya) OLUŞMAZ."""
+    u=require_user(request)
+    if not u:return RedirectResponse("/auth/login",303)
+    form=await request.form(); values,respondents,locked,locked_resp=form_state(form)
+    cid=str(form.get("case_id") or "")
+    if not cid:return HTMLResponse("Önce belge yükleyerek bir dosya oluşturun.",400)
+    case=repos.cases.get(cid)
+    if not case or case["owner_id"]!=u["id"]:return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
+    dosya_no=values.get("dosyaNo") or case.get("file_no") or ""
+    basvurucu=values.get("basvurucuAdiSoyadi") or case.get("title") or ""
+    dosya_turu=values.get("dosyaTuru") or case.get("file_type") or ""
+    baslangic_raw=values.get("baslangicTarihi") or case.get("start_date") or ""
+    from app.modules.tasks.storage import _parse_start
+    start=_parse_start(baslangic_raw)
+    missing=[]
+    if not dosya_no:missing.append("Dosya No")
+    if not basvurucu:missing.append("Başvurucu Adı Soyadı")
+    if not dosya_turu:missing.append("Dosya Türü")
+    if not start:missing.append("Süreç Başlangıç Tarihi (geçerli bir tarih olmalı)")
+    if missing:
+        html=render_editor("Bilgi Havuzu",values,respondents,locked,locked_resp,
+            "Takvime eklemek için şu alanlar eksik/geçersiz: "+", ".join(missing)+". Doldurup tekrar deneyin.",
+            custom_templates=list_visible_templates(u["id"]))
+        html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
+        return HTMLResponse(html,400)
+    from app.modules.calendar.service import CalendarService
+    result=CalendarService().add_case(u["id"],dosya_no,basvurucu,dosya_turu,start,main_case_id=cid,case_data=values)
+    return RedirectResponse(f"/tasks/?case_id={cid}",303)
+
 @app.post("/merge",response_class=HTMLResponse)
 async def merge(request:Request,merge_file:UploadFile=File(...)):
     u=require_user(request)
