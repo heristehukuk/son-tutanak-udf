@@ -69,8 +69,6 @@ class CalendarService:
             cid = create_case(owner_id, case_no, application_no, applicant_name, file_type)
 
         update_case_info(owner_id, cid, case_no, applicant_name, file_type, start_date.isoformat(), case_data=metadata)
-        from app.modules.folders import ensure_case_folders
-        ensure_case_folders(owner_id, cid)
         create_standard_tasks(owner_id, cid)
 
         deadlines = calculate_deadlines(start_date, file_type)

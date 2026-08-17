@@ -16,8 +16,8 @@ from app.database_layer.base import (
     UserRepository, SessionRepository, CaseRepository, DocumentRepository,
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
-    CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, FolderRepository,
+    CalendarEventRepository, TaskRepository, TaskTemplateRepository, FolderRepository,
+    TaskHistoryRepository, PermissionRepository,
 )
 
 
@@ -117,10 +117,10 @@ class SQLiteDocumentRepository(DocumentRepository):
         did = document.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO documents
-                (id,case_id,owner_id,original_name,stored_path,kind,size_bytes,created_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
+                (id,case_id,owner_id,original_name,stored_path,kind,size_bytes,created_at,folder_id)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
                 (did, document.get("case_id"), document["owner_id"], document["original_name"],
-                 document["stored_path"], document["kind"], document["size_bytes"], document["created_at"]))
+                 document["stored_path"], document["kind"], document["size_bytes"], document["created_at"], document.get("folder_id")))
         return self.get(did)
 
     def get(self, document_id: str) -> Optional[dict]:
@@ -132,6 +132,12 @@ class SQLiteDocumentRepository(DocumentRepository):
         with connect() as c:
             rows = c.execute("SELECT * FROM documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def update(self, document_id: str, values: dict) -> Optional[dict]:
+        if not values:return self.get(document_id)
+        cols=",".join(f"{k}=?" for k in values)
+        with connect() as c:c.execute(f"UPDATE documents SET {cols} WHERE id=?",(*values.values(),document_id))
+        return self.get(document_id)
 
     def delete(self, document_id: str) -> None:
         with connect() as c:
@@ -365,25 +371,6 @@ class SQLiteCalendarEventRepository(CalendarEventRepository):
             c.execute("DELETE FROM calendar_events WHERE case_id=?", (case_id,))
 
 
-class SQLiteFolderRepository(FolderRepository):
-    def create(self, folder: dict) -> dict:
-        folder=dict(folder); folder.setdefault("id", str(uuid4()))
-        cols=",".join(folder.keys()); qs=",".join("?" for _ in folder)
-        with connect() as c: c.execute(f"INSERT INTO folders ({cols}) VALUES ({qs})", tuple(folder.values()))
-        return self.get(folder["id"])
-    def get(self, folder_id):
-        with connect() as c: return _row_to_dict(c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone())
-    def list_for_case(self, case_id):
-        with connect() as c: return [_row_to_dict(r) for r in c.execute("SELECT * FROM folders WHERE case_id=? ORDER BY sort_order,name",(case_id,)).fetchall()]
-    def update(self, folder_id, values):
-        if not values:return self.get(folder_id)
-        with connect() as c:
-            sets=", ".join(f"{k}=?" for k in values); c.execute(f"UPDATE folders SET {sets} WHERE id=?", tuple(values.values())+(folder_id,))
-        return self.get(folder_id)
-    def delete(self, folder_id):
-        with connect() as c: c.execute("DELETE FROM folders WHERE id=?",(folder_id,))
-
-
 class SQLiteTaskRepository(TaskRepository):
     def create(self, task: dict) -> dict:
         tid = task.get("id") or str(uuid4())
@@ -485,3 +472,25 @@ class SQLitePermissionRepository(PermissionRepository):
         with connect() as c:
             rows = c.execute("SELECT permission FROM user_permissions WHERE user_id=?", (user_id,)).fetchall()
         return [r["permission"] for r in rows]
+
+
+class SQLiteFolderRepository(FolderRepository):
+    def create(self, folder: dict) -> dict:
+        fid=folder.get("id") or str(uuid4())
+        with connect() as c:
+            c.execute("""INSERT INTO folders (id,owner_id,case_id,parent_id,name,folder_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+                      (fid,folder["owner_id"],folder["case_id"],folder.get("parent_id"),folder["name"],folder.get("folder_type","custom"),folder["created_at"],folder["updated_at"]))
+        return self.get(fid)
+    def get(self, folder_id: str) -> Optional[dict]:
+        with connect() as c: row=c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone()
+        return _row_to_dict(row)
+    def update(self, folder_id: str, values: dict) -> Optional[dict]:
+        if not values:return self.get(folder_id)
+        cols=",".join(f"{k}=?" for k in values)
+        with connect() as c:c.execute(f"UPDATE folders SET {cols} WHERE id=?",(*values.values(),folder_id))
+        return self.get(folder_id)
+    def list_by_case(self, owner_id: str, case_id: str) -> list[dict]:
+        with connect() as c: rows=c.execute("SELECT * FROM folders WHERE owner_id=? AND case_id=? ORDER BY name",(owner_id,case_id)).fetchall()
+        return [dict(r) for r in rows]
+    def delete(self, folder_id: str) -> None:
+        with connect() as c:c.execute("DELETE FROM folders WHERE id=?",(folder_id,))

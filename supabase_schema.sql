@@ -3,12 +3,10 @@
 -- son-tutanak-udf projesi icin Supabase (PostgreSQL) semasi.
 --
 -- Bu dosya app/database_layer/supabase_repository.py ile BIREBIR uyumlu
--- olacak sekilde hazirlanmistir. Supabase repository katmaninin kullandigi ana tablolar ile anket,
--- takvim, gorev ve klasor tablolarini icerir:
+-- olacak sekilde hazirlanmistir. Sadece Supabase repository katmaninin
+-- gercekten kullandigi 11 tablo icerir:
 --   users, sessions, plans, cases, documents, generated_documents,
---   calendar_events, task_templates, tasks, task_history, user_permissions,
---   usage, messages, custom_templates, fee_tariffs, audit_logs, folders,
---   surveys, survey_questions, survey_answers
+--   usage, messages, custom_templates, fee_tariffs, audit_logs
 --
 -- NOT: SQLite semasinda (app/database.py) ayrica surveys,
 -- survey_questions, survey_answers tablolari da var, ancak
@@ -92,26 +90,6 @@ CREATE TABLE IF NOT EXISTS generated_documents (
     doc_kind           TEXT,
     created_at         TEXT NOT NULL
 );
-
--- =====================================================================
--- DOSYA KLASORLERI
--- Her case icin standart sistem klasorleri ve kullanicinin ozel klasorleri.
--- =====================================================================
-CREATE TABLE IF NOT EXISTS folders (
-    id          TEXT PRIMARY KEY,
-    case_id     TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-    owner_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    parent_id   TEXT REFERENCES folders(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    folder_type TEXT NOT NULL DEFAULT 'custom',
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    is_system   INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-
-ALTER TABLE documents ADD COLUMN IF NOT EXISTS folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
-ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS calendar_events (
     id           TEXT PRIMARY KEY,
@@ -279,11 +257,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_fee_tariffs_category_year ON fee_tariffs(category, year);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner_case ON tasks(owner_id, case_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(owner_id, due_date, status);
-CREATE INDEX IF NOT EXISTS idx_folders_case ON folders(case_id);
-CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
-CREATE INDEX IF NOT EXISTS idx_documents_folder_id ON documents(folder_id);
-CREATE INDEX IF NOT EXISTS idx_generated_documents_folder_id ON generated_documents(folder_id);
-
 CREATE INDEX IF NOT EXISTS idx_calendar_events_case ON calendar_events(case_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_owner_date ON calendar_events(owner_id, event_date);
 CREATE INDEX IF NOT EXISTS idx_messages_case ON messages(case_id);
@@ -310,3 +283,24 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) 
 -- acmak istersen once her tablo icin policy yazman gerekir, yoksa
 -- backend istekleri 0 satir donmeye baslar.
 -- =====================================================================
+
+-- =====================================================================
+-- Klasör sistemi (mevcut kurulumlarda ayrıca supabase_folders_migration.sql
+-- çalıştırılabilir; IF NOT EXISTS/IF NOT EXISTS sayesinde idempotenttir.)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    folder_type TEXT NOT NULL DEFAULT 'custom',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
+ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_folders_owner_case ON folders(owner_id, case_id);
+CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);
+CREATE INDEX IF NOT EXISTS idx_documents_folder_id ON documents(folder_id);
+CREATE INDEX IF NOT EXISTS idx_generated_documents_folder_id ON generated_documents(folder_id);
