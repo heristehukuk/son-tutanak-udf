@@ -615,6 +615,33 @@ def template_bytes(choice):
 
 def standard_result(choice):return TEMPLATES.get(choice,('', '', ''))[2]
 
+
+FIXED_TEMPLATE_DOC_KIND = "son_tutanak"
+
+
+def discover_folder_templates():
+    result = {}
+    base = TEMPLATE_DIR
+    if not base.exists():
+        return result
+    labels = {
+        "davet_mektubu": "Davet Mektubu",
+        "ucret_pusulasi": "Ücret Pusulası",
+        "ust_yazi": "Üst Yazı",
+        "son_tutanak": "Son Tutanak",
+    }
+    for folder in base.iterdir():
+        if not folder.is_dir() or folder.name.startswith("."):
+            continue
+        for p in sorted(folder.glob("*.udf")):
+            key = f"folder__{folder.name}__{p.stem}"
+            result[key] = {
+                "path": p,
+                "doc_kind": folder.name,
+                "label": labels.get(folder.name, p.stem),
+            }
+    return result
+
 def form_state(form):
     values={k:str(form.get(k,'')).strip() for k,_ in FIELDS}
     values['dosyaTuru']=normalize_dosya_turu(values.get('dosyaTuru',''))
