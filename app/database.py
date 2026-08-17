@@ -55,6 +55,14 @@ def init_db():
             owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             original_template TEXT NOT NULL, stored_path TEXT NOT NULL, doc_kind TEXT, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS folders (
+            id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+            name TEXT NOT NULL, folder_type TEXT NOT NULL DEFAULT 'custom', sort_order INTEGER NOT NULL DEFAULT 0,
+            is_system INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_folders_case ON folders(case_id);
+        CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
         CREATE TABLE IF NOT EXISTS usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             metric TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 1, period TEXT NOT NULL, created_at TEXT NOT NULL

@@ -190,6 +190,23 @@ class PermissionRepository(ABC):
     def list_for_user(self, user_id: str) -> list[str]: ...
 
 
+class FolderRepository(ABC):
+    @abstractmethod
+    def create(self, folder: dict) -> dict: ...
+
+    @abstractmethod
+    def get(self, folder_id: str) -> Optional[dict]: ...
+
+    @abstractmethod
+    def list_for_case(self, case_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def update(self, folder_id: str, values: dict) -> Optional[dict]: ...
+
+    @abstractmethod
+    def delete(self, folder_id: str) -> None: ...
+
+
 class PlanRepository(ABC):
     @abstractmethod
     def seed_defaults(self, plans: list[dict]) -> None: ...

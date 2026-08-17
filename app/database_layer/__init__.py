@@ -29,7 +29,7 @@ class Repositories:
                 SupabaseMessageRepository, SupabaseTariffRepository, SupabaseAuditRepository,
                 SupabasePlanRepository, SupabaseUsageRepository, SupabaseCalendarEventRepository,
                 SupabaseTaskRepository, SupabaseTaskTemplateRepository, SupabaseTaskHistoryRepository,
-                SupabasePermissionRepository,
+                SupabasePermissionRepository, SupabaseFolderRepository,
             )
             self.users = SupabaseUserRepository()
             self.sessions = SupabaseSessionRepository()
@@ -47,6 +47,7 @@ class Repositories:
             self.task_templates = SupabaseTaskTemplateRepository()
             self.task_history = SupabaseTaskHistoryRepository()
             self.permissions = SupabasePermissionRepository()
+            self.folders = SupabaseFolderRepository()
         else:
             from app.database_layer.sqlite_repository import (
                 SQLiteUserRepository, SQLiteSessionRepository, SQLiteCaseRepository,
@@ -54,7 +55,7 @@ class Repositories:
                 SQLiteMessageRepository, SQLiteTariffRepository, SQLiteAuditRepository,
                 SQLitePlanRepository, SQLiteUsageRepository, SQLiteCalendarEventRepository,
                 SQLiteTaskRepository, SQLiteTaskTemplateRepository, SQLiteTaskHistoryRepository,
-                SQLitePermissionRepository,
+                SQLitePermissionRepository, SQLiteFolderRepository,
             )
             self.users = SQLiteUserRepository()
             self.sessions = SQLiteSessionRepository()
@@ -72,6 +73,7 @@ class Repositories:
             self.task_templates = SQLiteTaskTemplateRepository()
             self.task_history = SQLiteTaskHistoryRepository()
             self.permissions = SQLitePermissionRepository()
+            self.folders = SQLiteFolderRepository()
 
 
 # Tek, paylaşılan örnek (singleton).

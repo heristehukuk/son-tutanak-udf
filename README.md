@@ -33,3 +33,11 @@ Tesseract `tur+eng` OCR kullanılır; PDF'de seçilebilir metin yoksa sayfalar O
 
 ## Render OCR
 `apt.txt` installs Tesseract OCR, Turkish/English language data and Poppler. JPG/JPEG/PNG and scanned PDFs can therefore be OCR'd on Render.
+
+## Dosya Klasor Sistemi
+
+Dosya merkezli klasor modulu `/folders?case_id=<CASE_ID>` adresinde bulunur.
+Her yeni dosyada 7 standart sistem klasoru otomatik olusturulur. Kullanici ozel klasor ekleyebilir; sistem klasorleri silinemez.
+Belgeler `documents.folder_id`, uretilen belgeler `generated_documents.folder_id` ile klasorlerine baglanir.
+
+Supabase'e mevcut kurulumu guncellemek icin `supabase_schema.sql` dosyasini SQL Editor'de calistirin. Dosya mevcut tablolari bozmak yerine `folders` tablosunu ve belge-klasor baglantilarini ekler.

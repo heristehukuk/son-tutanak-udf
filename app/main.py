@@ -32,6 +32,7 @@ from app.web import page
 from app.supabase_client import supabase_health
 from app.modules.calendar.router import router as calendar_router
 from app.modules.tasks.router import router as tasks_router
+from app.modules.folders import router as folders_router
 app=FastAPI(title="Son Tutanak UDF Asistanı v17")
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
@@ -43,6 +44,7 @@ app.include_router(templates_router,prefix="/templates")
 app.include_router(feepusula_router,prefix="/harcama-pusulasi")
 app.include_router(calendar_router)
 app.include_router(tasks_router)
+app.include_router(folders_router)
 
 @app.on_event("startup")
 async def startup():

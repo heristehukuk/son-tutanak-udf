@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository,
+    TaskHistoryRepository, PermissionRepository, FolderRepository,
 )
 
 
@@ -352,6 +352,30 @@ class SupabaseCalendarEventRepository(CalendarEventRepository):
     def delete_for_case(self, case_id: str) -> None:
         c = get_supabase()
         c.table("calendar_events").delete().eq("case_id", case_id).execute()
+
+
+class SupabaseFolderRepository(FolderRepository):
+    def create(self, folder: dict) -> dict:
+        from uuid import uuid4
+        folder = dict(folder); folder.setdefault("id", str(uuid4()))
+        c = get_supabase(); c.table("folders").insert(folder).execute()
+        return self.get(folder["id"])
+
+    def get(self, folder_id: str) -> Optional[dict]:
+        c = get_supabase(); r = c.table("folders").select("*").eq("id", folder_id).execute()
+        return _first(r.data)
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        c = get_supabase(); r = c.table("folders").select("*").eq("case_id", case_id).order("sort_order").order("name").execute()
+        return r.data or []
+
+    def update(self, folder_id: str, values: dict) -> Optional[dict]:
+        if not values: return self.get(folder_id)
+        c = get_supabase(); c.table("folders").update(values).eq("id", folder_id).execute()
+        return self.get(folder_id)
+
+    def delete(self, folder_id: str) -> None:
+        c = get_supabase(); c.table("folders").delete().eq("id", folder_id).execute()
 
 
 class SupabaseTaskRepository(TaskRepository):

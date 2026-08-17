@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository,
+    TaskHistoryRepository, PermissionRepository, FolderRepository,
 )
 
 
@@ -363,6 +363,25 @@ class SQLiteCalendarEventRepository(CalendarEventRepository):
     def delete_for_case(self, case_id: str) -> None:
         with connect() as c:
             c.execute("DELETE FROM calendar_events WHERE case_id=?", (case_id,))
+
+
+class SQLiteFolderRepository(FolderRepository):
+    def create(self, folder: dict) -> dict:
+        folder=dict(folder); folder.setdefault("id", str(uuid4()))
+        cols=",".join(folder.keys()); qs=",".join("?" for _ in folder)
+        with connect() as c: c.execute(f"INSERT INTO folders ({cols}) VALUES ({qs})", tuple(folder.values()))
+        return self.get(folder["id"])
+    def get(self, folder_id):
+        with connect() as c: return _row_to_dict(c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone())
+    def list_for_case(self, case_id):
+        with connect() as c: return [_row_to_dict(r) for r in c.execute("SELECT * FROM folders WHERE case_id=? ORDER BY sort_order,name",(case_id,)).fetchall()]
+    def update(self, folder_id, values):
+        if not values:return self.get(folder_id)
+        with connect() as c:
+            sets=", ".join(f"{k}=?" for k in values); c.execute(f"UPDATE folders SET {sets} WHERE id=?", tuple(values.values())+(folder_id,))
+        return self.get(folder_id)
+    def delete(self, folder_id):
+        with connect() as c: c.execute("DELETE FROM folders WHERE id=?",(folder_id,))
 
 
 class SQLiteTaskRepository(TaskRepository):
