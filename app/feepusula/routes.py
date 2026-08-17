@@ -5,7 +5,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from app.auth.service import get_user_by_session
 from app.documents.engine import form_state
 from app.feepusula.service import build_harcama_pusulasi
-from app.files.service import save_generated
 
 router = APIRouter()
 
@@ -20,7 +19,7 @@ async def build_pusula(request: Request):
         xlsx_bytes, uyari = build_harcama_pusulasi(
             daire=values.get("daireBilgisi", ""),
             dosya_turu_text=values.get("dosyaTuru") or values.get("uyusmazlik") or "",
-            dosya_no=values.get("dosyaNo", ""),
+            basvuru_no=values.get("basvuruNo", ""),
             taraf_sayisi=taraf_sayisi,
             arabulucu_adi=values.get("arabulucuAdi", ""),
             arabulucu_tc=values.get("arabulucuTc", ""),
@@ -32,13 +31,6 @@ async def build_pusula(request: Request):
     headers = {"Content-Disposition": 'attachment; filename="harcama_pusulasi.xlsx"'}
     if uyari:
         headers["X-Tarife-Uyari"] = "1"
-    case_id = str(form.get("case_id") or "")
-    if case_id:
-        try:
-            save_generated(u["id"], case_id, xlsx_bytes, "Harcama Pusulası", doc_kind="ucret_pusulasi", extension=".xlsx")
-        except Exception:
-            # Belgenin indirilmesini klasör kaydı sorunu engellemez.
-            pass
     resp = StreamingResponse(io.BytesIO(xlsx_bytes),
                               media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                               headers=headers)

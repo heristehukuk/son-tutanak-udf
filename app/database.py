@@ -55,14 +55,6 @@ def init_db():
             owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             original_template TEXT NOT NULL, stored_path TEXT NOT NULL, doc_kind TEXT, created_at TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS folders (
-            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-            parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE, name TEXT NOT NULL,
-            folder_type TEXT NOT NULL DEFAULT 'custom', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_folders_owner_case ON folders(owner_id, case_id);
-        CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);
         CREATE TABLE IF NOT EXISTS usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             metric TEXT NOT NULL, amount INTEGER NOT NULL DEFAULT 1, period TEXT NOT NULL, created_at TEXT NOT NULL
@@ -138,6 +130,13 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT, action TEXT NOT NULL,
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS folders (
+            id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
+            name TEXT NOT NULL, code TEXT, is_system INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_folders_case ON folders(case_id, owner_id);
+        
         """)
         # NOT: Uygulama daha önce iban sütunu olmadan kurulmuş olabilir; CREATE TABLE IF NOT EXISTS
         # bu durumda sütunu eklemez. Var olan veritabanlarını bozmadan güvenle tamamlıyoruz.
@@ -149,14 +148,14 @@ def init_db():
                           ("status","TEXT NOT NULL DEFAULT 'open'"),("case_data_json","TEXT")):
             if col not in case_cols:
                 c.execute(f"ALTER TABLE cases ADD COLUMN {col} {ddl}")
+        doc_cols = [r["name"] for r in c.execute("PRAGMA table_info(documents)").fetchall()]
+        if "folder_id" not in doc_cols:
+            c.execute("ALTER TABLE documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
         gd_cols = [r["name"] for r in c.execute("PRAGMA table_info(generated_documents)").fetchall()]
         if "doc_kind" not in gd_cols:
             c.execute("ALTER TABLE generated_documents ADD COLUMN doc_kind TEXT")
         if "folder_id" not in gd_cols:
-            c.execute("ALTER TABLE generated_documents ADD COLUMN folder_id TEXT")
-        doc_cols = [r["name"] for r in c.execute("PRAGMA table_info(documents)").fetchall()]
-        if "folder_id" not in doc_cols:
-            c.execute("ALTER TABLE documents ADD COLUMN folder_id TEXT")
+            c.execute("ALTER TABLE generated_documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
         msg_cols = [r["name"] for r in c.execute("PRAGMA table_info(messages)").fetchall()]
         if "case_id" not in msg_cols:
             c.execute("ALTER TABLE messages ADD COLUMN case_id TEXT REFERENCES cases(id) ON DELETE SET NULL")

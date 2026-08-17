@@ -15,9 +15,9 @@ from app.supabase_client import get_supabase
 from app.database_layer.base import (
     UserRepository, SessionRepository, CaseRepository, DocumentRepository,
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
-    TariffRepository, AuditRepository, PlanRepository, UsageRepository, FolderRepository,
+    TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository,
+    TaskHistoryRepository, PermissionRepository, FolderRepository,
 )
 
 
@@ -117,11 +117,6 @@ class SupabaseDocumentRepository(DocumentRepository):
         c = get_supabase()
         r = c.table("documents").select("*").eq("owner_id", owner_id).order("created_at", desc=True).execute()
         return r.data or []
-
-    def update(self, document_id: str, values: dict) -> Optional[dict]:
-        if not values: return self.get(document_id)
-        c=get_supabase(); c.table("documents").update(values).eq("id",document_id).execute()
-        return self.get(document_id)
 
     def delete(self, document_id: str) -> None:
         c = get_supabase()
@@ -456,24 +451,28 @@ class SupabasePermissionRepository(PermissionRepository):
 
 
 class SupabaseFolderRepository(FolderRepository):
-    def create(self, folder: dict) -> dict:
+    def create(self, folder):
         from uuid import uuid4
-        folder=dict(folder); folder.setdefault("id",str(uuid4()))
+        from app.auth.service import now
+        folder=dict(folder); folder.setdefault("id",str(uuid4())); folder.setdefault("created_at",now().isoformat())
         c=get_supabase(); c.table("folders").insert(folder).execute()
         return self.get(folder["id"])
-
-    def get(self, folder_id: str) -> Optional[dict]:
-        c=get_supabase(); r=c.table("folders").select("*").eq("id",folder_id).execute()
-        return _first(r.data)
-
-    def update(self, folder_id: str, values: dict) -> Optional[dict]:
-        if not values:return self.get(folder_id)
-        c=get_supabase(); c.table("folders").update(values).eq("id",folder_id).execute()
-        return self.get(folder_id)
-
-    def list_by_case(self, owner_id: str, case_id: str) -> list[dict]:
-        c=get_supabase(); r=(c.table("folders").select("*").eq("owner_id",owner_id).eq("case_id",case_id).order("name").execute())
-        return r.data or []
-
-    def delete(self, folder_id: str) -> None:
-        c=get_supabase(); c.table("folders").delete().eq("id",folder_id).execute()
+    def get(self, folder_id):
+        c=get_supabase(); r=c.table("folders").select("*").eq("id",folder_id).execute(); return _first(r.data)
+    def list_for_case(self, case_id, owner_id):
+        c=get_supabase(); r=c.table("folders").select("*").eq("case_id",case_id).eq("owner_id",owner_id).order("sort_order").order("name").execute(); return r.data or []
+    def create_standard(self, case_id, owner_id):
+        from app.auth.service import now
+        names=[("01","Başvuru ve Kaynak Belgeler"),("02","Davetler"),("03","Görüşme Belgeleri"),("04","Son Tutanaklar"),("05","Ücret Pusulaları"),("06","Üst Yazılar"),("07","Diğer Belgeler")]
+        c=get_supabase(); out=[]
+        for code,name in names:
+            r=c.table("folders").select("*").eq("case_id",case_id).eq("owner_id",owner_id).eq("code",code).execute()
+            if r.data: out.append(r.data[0]); continue
+            row={"id":str(__import__('uuid').uuid4()),"case_id":case_id,"owner_id":owner_id,"parent_id":None,"name":name,"code":code,"is_system":1,"sort_order":int(code),"created_at":now().isoformat()}
+            c.table("folders").insert(row).execute(); out.append(row)
+        return out
+    def delete(self, folder_id, owner_id):
+        c=get_supabase(); r=c.table("folders").select("is_system").eq("id",folder_id).eq("owner_id",owner_id).execute()
+        if not r.data: return
+        if r.data[0].get("is_system"): raise ValueError("Sistem klasörü silinemez.")
+        c.table("folders").delete().eq("id",folder_id).eq("owner_id",owner_id).execute()

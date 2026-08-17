@@ -27,7 +27,7 @@ async def files(request:Request):
             <p>Dosya Türü: {r.get("file_type") or "-"}</p>
             <div class="checklist">{check_html}</div>
             <p class="links">
-                <a href="/folders/case/{r["id"]}">📁 Klasörler</a> ·
+                <a href="/folders?case_id={r["id"]}">📁 Klasörler</a> ·
                 <a href="/tasks/?case_id={r["id"]}">📋 Görevler</a> ·
                 <a href="/calendar">📅 Takvim</a> ·
                 <a href="/messages/?case_id={r["id"]}">💬 Dosya Mesajları</a>

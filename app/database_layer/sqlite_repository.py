@@ -16,8 +16,8 @@ from app.database_layer.base import (
     UserRepository, SessionRepository, CaseRepository, DocumentRepository,
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
-    CalendarEventRepository, TaskRepository, TaskTemplateRepository, FolderRepository,
-    TaskHistoryRepository, PermissionRepository,
+    CalendarEventRepository, TaskRepository, TaskTemplateRepository,
+    TaskHistoryRepository, PermissionRepository, FolderRepository,
 )
 
 
@@ -117,10 +117,10 @@ class SQLiteDocumentRepository(DocumentRepository):
         did = document.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO documents
-                (id,case_id,owner_id,original_name,stored_path,kind,size_bytes,created_at,folder_id)
-                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (id,case_id,owner_id,original_name,stored_path,kind,size_bytes,created_at)
+                VALUES(?,?,?,?,?,?,?,?)""",
                 (did, document.get("case_id"), document["owner_id"], document["original_name"],
-                 document["stored_path"], document["kind"], document["size_bytes"], document["created_at"], document.get("folder_id")))
+                 document["stored_path"], document["kind"], document["size_bytes"], document["created_at"]))
         return self.get(did)
 
     def get(self, document_id: str) -> Optional[dict]:
@@ -132,12 +132,6 @@ class SQLiteDocumentRepository(DocumentRepository):
         with connect() as c:
             rows = c.execute("SELECT * FROM documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
-
-    def update(self, document_id: str, values: dict) -> Optional[dict]:
-        if not values:return self.get(document_id)
-        cols=",".join(f"{k}=?" for k in values)
-        with connect() as c:c.execute(f"UPDATE documents SET {cols} WHERE id=?",(*values.values(),document_id))
-        return self.get(document_id)
 
     def delete(self, document_id: str) -> None:
         with connect() as c:
@@ -475,22 +469,34 @@ class SQLitePermissionRepository(PermissionRepository):
 
 
 class SQLiteFolderRepository(FolderRepository):
-    def create(self, folder: dict) -> dict:
-        fid=folder.get("id") or str(uuid4())
+    def create(self, folder):
+        import uuid
+        folder=dict(folder); folder.setdefault("id",str(uuid.uuid4()))
         with connect() as c:
-            c.execute("""INSERT INTO folders (id,owner_id,case_id,parent_id,name,folder_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)""",
-                      (fid,folder["owner_id"],folder["case_id"],folder.get("parent_id"),folder["name"],folder.get("folder_type","custom"),folder["created_at"],folder["updated_at"]))
-        return self.get(fid)
-    def get(self, folder_id: str) -> Optional[dict]:
-        with connect() as c: row=c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone()
-        return _row_to_dict(row)
-    def update(self, folder_id: str, values: dict) -> Optional[dict]:
-        if not values:return self.get(folder_id)
-        cols=",".join(f"{k}=?" for k in values)
-        with connect() as c:c.execute(f"UPDATE folders SET {cols} WHERE id=?",(*values.values(),folder_id))
-        return self.get(folder_id)
-    def list_by_case(self, owner_id: str, case_id: str) -> list[dict]:
-        with connect() as c: rows=c.execute("SELECT * FROM folders WHERE owner_id=? AND case_id=? ORDER BY name",(owner_id,case_id)).fetchall()
-        return [dict(r) for r in rows]
-    def delete(self, folder_id: str) -> None:
-        with connect() as c:c.execute("DELETE FROM folders WHERE id=?",(folder_id,))
+            cols=", ".join(folder.keys()); vals=list(folder.values()); qs=", ".join(["?"]*len(vals))
+            c.execute(f"INSERT INTO folders ({cols}) VALUES ({qs})", vals)
+        return self.get(folder["id"])
+    def get(self, folder_id):
+        with connect() as c:
+            r=c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone()
+            return dict(r) if r else None
+    def list_for_case(self, case_id, owner_id):
+        with connect() as c:
+            rows=c.execute("SELECT * FROM folders WHERE case_id=? AND owner_id=? ORDER BY sort_order,name",(case_id,owner_id)).fetchall()
+            return [dict(r) for r in rows]
+    def create_standard(self, case_id, owner_id):
+        from app.auth.service import now
+        names=[("01","Başvuru ve Kaynak Belgeler"),("02","Davetler"),("03","Görüşme Belgeleri"),("04","Son Tutanaklar"),("05","Ücret Pusulaları"),("06","Üst Yazılar"),("07","Diğer Belgeler")]
+        out=[]
+        for code,name in names:
+            with connect() as c:
+                r=c.execute("SELECT * FROM folders WHERE case_id=? AND owner_id=? AND code=?",(case_id,owner_id,code)).fetchone()
+            if r: out.append(dict(r)); continue
+            out.append(self.create({"id":str(__import__('uuid').uuid4()),"case_id":case_id,"owner_id":owner_id,"parent_id":None,"name":name,"code":code,"is_system":1,"sort_order":int(code),"created_at":now().isoformat()}))
+        return out
+    def delete(self, folder_id, owner_id):
+        with connect() as c:
+            r=c.execute("SELECT is_system FROM folders WHERE id=? AND owner_id=?",(folder_id,owner_id)).fetchone()
+            if not r: return
+            if r[0]: raise ValueError("Sistem klasörü silinemez.")
+            c.execute("DELETE FROM folders WHERE id=? AND owner_id=?",(folder_id,owner_id))
