@@ -16,6 +16,8 @@ from app.database_layer.base import (
     UserRepository, SessionRepository, CaseRepository, DocumentRepository,
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
+    CalendarEventRepository, TaskRepository, TaskTemplateRepository,
+    TaskHistoryRepository, PermissionRepository,
 )
 
 
@@ -49,6 +51,10 @@ class SupabaseUserRepository(UserRepository):
         c = get_supabase()
         r = c.table("users").select("*").order("created_at", desc=True).execute()
         return r.data or []
+
+    def delete(self, user_id: str) -> None:
+        c = get_supabase()
+        c.table("users").delete().eq("id", user_id).execute()
 
 
 class SupabaseSessionRepository(SessionRepository):
@@ -111,6 +117,10 @@ class SupabaseDocumentRepository(DocumentRepository):
         c = get_supabase()
         r = c.table("documents").select("*").eq("owner_id", owner_id).order("created_at", desc=True).execute()
         return r.data or []
+
+    def delete(self, document_id: str) -> None:
+        c = get_supabase()
+        c.table("documents").delete().eq("id", document_id).execute()
 
     def list_all_with_owner_email(self) -> list[dict]:
         # Supabase PostgREST tek sorguda foreign-table join'i "select" içinde ilişkiyle yapar.
@@ -208,6 +218,38 @@ class SupabaseMessageRepository(MessageRepository):
             rows.append(row)
         return rows
 
+    def list_thread(self, user_a: str, user_b: str) -> list[dict]:
+        c = get_supabase()
+        r = (c.table("messages").select("*")
+             .or_(f"and(sender_id.eq.{user_a},recipient_id.eq.{user_b}),"
+                  f"and(sender_id.eq.{user_b},recipient_id.eq.{user_a})")
+             .order("created_at", desc=False).execute())
+        return r.data or []
+
+    def count_unread(self, recipient_id: str) -> int:
+        c = get_supabase()
+        r = (c.table("messages").select("id").eq("recipient_id", recipient_id)
+             .is_("read_at", "null").execute())
+        return len(r.data or [])
+
+    def mark_thread_read(self, recipient_id: str, sender_id: str) -> None:
+        from app.auth.service import now
+        c = get_supabase()
+        (c.table("messages").update({"read_at": now().isoformat()})
+         .eq("recipient_id", recipient_id).eq("sender_id", sender_id).is_("read_at", "null").execute())
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        c = get_supabase()
+        r = (c.table("messages").select("*, users!messages_sender_id_fkey(display_name)")
+             .eq("case_id", case_id).order("created_at", desc=False).execute())
+        rows = []
+        for row in (r.data or []):
+            row = dict(row)
+            users_rel = row.pop("users", None) or {}
+            row["display_name"] = users_rel.get("display_name")
+            rows.append(row)
+        return rows
+
 
 class SupabaseTariffRepository(TariffRepository):
     def create(self, tariff: dict) -> dict:
@@ -285,3 +327,124 @@ class SupabaseUsageRepository(UsageRepository):
         c = get_supabase()
         r = c.table("usage").insert(usage).execute()
         return _first(r.data) or usage
+
+
+class SupabaseCalendarEventRepository(CalendarEventRepository):
+    def create(self, event: dict) -> dict:
+        from uuid import uuid4
+        event = dict(event)
+        event.setdefault("id", str(uuid4()))
+        c = get_supabase()
+        c.table("calendar_events").insert(event).execute()
+        r = c.table("calendar_events").select("*").eq("id", event["id"]).execute()
+        return _first(r.data)
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("calendar_events").select("*").eq("case_id", case_id).order("event_date").execute()
+        return r.data or []
+
+    def list_for_owner(self, owner_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("calendar_events").select("*").eq("owner_id", owner_id).order("event_date").execute()
+        return r.data or []
+
+    def delete_for_case(self, case_id: str) -> None:
+        c = get_supabase()
+        c.table("calendar_events").delete().eq("case_id", case_id).execute()
+
+
+class SupabaseTaskRepository(TaskRepository):
+    def create(self, task: dict) -> dict:
+        from uuid import uuid4
+        task = dict(task)
+        task.setdefault("id", str(uuid4()))
+        c = get_supabase()
+        c.table("tasks").insert(task).execute()
+        return self.get(task["id"])
+
+    def get(self, task_id: str) -> Optional[dict]:
+        c = get_supabase()
+        r = c.table("tasks").select("*").eq("id", task_id).execute()
+        return _first(r.data)
+
+    def update(self, task_id: str, values: dict) -> Optional[dict]:
+        if not values: return self.get(task_id)
+        c = get_supabase()
+        c.table("tasks").update(values).eq("id", task_id).execute()
+        return self.get(task_id)
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("tasks").select("*").eq("case_id", case_id).order("due_date").execute()
+        return r.data or []
+
+    def list_for_owner(self, owner_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("tasks").select("*").eq("owner_id", owner_id).order("due_date").execute()
+        return r.data or []
+
+
+class SupabaseTaskTemplateRepository(TaskTemplateRepository):
+    def upsert(self, template: dict) -> dict:
+        from uuid import uuid4
+        c = get_supabase()
+        existing = (c.table("task_templates").select("id")
+                    .eq("owner_id", template["owner_id"]).eq("task_key", template["task_key"]).execute())
+        if existing.data:
+            tid = existing.data[0]["id"]
+            values = {k: v for k, v in template.items() if k not in ("id", "owner_id", "task_key", "created_at")}
+            c.table("task_templates").update(values).eq("id", tid).execute()
+        else:
+            template = dict(template)
+            template.setdefault("id", str(uuid4()))
+            c.table("task_templates").insert(template).execute()
+            tid = template["id"]
+        r = c.table("task_templates").select("*").eq("id", tid).execute()
+        return _first(r.data)
+
+    def list_for_owner(self, owner_id: str) -> list[dict]:
+        c = get_supabase()
+        r = (c.table("task_templates").select("*").eq("owner_id", owner_id)
+             .eq("is_active", 1).order("sort_order").execute())
+        return r.data or []
+
+
+class SupabaseTaskHistoryRepository(TaskHistoryRepository):
+    def create(self, record: dict) -> dict:
+        from uuid import uuid4
+        record = dict(record)
+        record.setdefault("id", str(uuid4()))
+        c = get_supabase()
+        c.table("task_history").insert(record).execute()
+        r = c.table("task_history").select("*").eq("id", record["id"]).execute()
+        return _first(r.data)
+
+    def list_for_task(self, task_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("task_history").select("*").eq("task_id", task_id).order("created_at").execute()
+        return r.data or []
+
+
+class SupabasePermissionRepository(PermissionRepository):
+    def grant(self, user_id: str, permission: str, granted_by: Optional[str]) -> dict:
+        from uuid import uuid4
+        from app.auth.service import now
+        c = get_supabase()
+        existing = (c.table("user_permissions").select("id")
+                    .eq("user_id", user_id).eq("permission", permission).execute())
+        if not existing.data:
+            c.table("user_permissions").insert({
+                "id": str(uuid4()), "user_id": user_id, "permission": permission,
+                "granted_at": now().isoformat(), "granted_by": granted_by,
+            }).execute()
+        return {"user_id": user_id, "permission": permission}
+
+    def revoke(self, user_id: str, permission: str) -> None:
+        c = get_supabase()
+        c.table("user_permissions").delete().eq("user_id", user_id).eq("permission", permission).execute()
+
+    def list_for_user(self, user_id: str) -> list[str]:
+        c = get_supabase()
+        r = c.table("user_permissions").select("permission").eq("user_id", user_id).execute()
+        return [row["permission"] for row in (r.data or [])]

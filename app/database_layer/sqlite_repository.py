@@ -16,6 +16,8 @@ from app.database_layer.base import (
     UserRepository, SessionRepository, CaseRepository, DocumentRepository,
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
+    CalendarEventRepository, TaskRepository, TaskTemplateRepository,
+    TaskHistoryRepository, PermissionRepository,
 )
 
 
@@ -50,6 +52,10 @@ class SQLiteUserRepository(UserRepository):
             c.execute(f"UPDATE users SET {cols} WHERE id=?", (*values.values(), user_id))
         return self.get(user_id)
 
+    def delete(self, user_id: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM users WHERE id=?", (user_id,))
+
     def list_all(self) -> list[dict]:
         with connect() as c:
             rows = c.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
@@ -79,10 +85,13 @@ class SQLiteCaseRepository(CaseRepository):
     def create(self, case: dict) -> dict:
         cid = case.get("id") or str(uuid4())
         with connect() as c:
-            c.execute("""INSERT INTO cases (id,owner_id,file_no,application_no,title,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?)""",
+            c.execute("""INSERT INTO cases
+                (id,owner_id,file_no,application_no,title,file_type,start_date,status,case_data_json,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (cid, case["owner_id"], case.get("file_no"), case.get("application_no"),
-                 case.get("title"), case["created_at"], case["updated_at"]))
+                 case.get("title"), case.get("file_type"), case.get("start_date"),
+                 case.get("status", "open"), case.get("case_data_json"),
+                 case["created_at"], case["updated_at"]))
         return self.get(cid)
 
     def get(self, case_id: str) -> Optional[dict]:
@@ -124,6 +133,10 @@ class SQLiteDocumentRepository(DocumentRepository):
             rows = c.execute("SELECT * FROM documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def delete(self, document_id: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM documents WHERE id=?", (document_id,))
+
     def list_all_with_owner_email(self) -> list[dict]:
         with connect() as c:
             rows = c.execute("""SELECT d.*,u.email FROM documents d JOIN users u ON u.id=d.owner_id
@@ -136,10 +149,10 @@ class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
         did = document.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO generated_documents
-                (id,case_id,owner_id,original_template,stored_path,created_at)
-                VALUES(?,?,?,?,?,?)""",
+                (id,case_id,owner_id,original_template,stored_path,doc_kind,created_at)
+                VALUES(?,?,?,?,?,?,?)""",
                 (did, document.get("case_id"), document["owner_id"], document["original_template"],
-                 document["stored_path"], document["created_at"]))
+                 document["stored_path"], document.get("doc_kind"), document["created_at"]))
         with connect() as c:
             row = c.execute("SELECT * FROM generated_documents WHERE id=?", (did,)).fetchone()
         return _row_to_dict(row)
@@ -189,9 +202,10 @@ class SQLiteMessageRepository(MessageRepository):
     def create(self, message: dict) -> dict:
         mid = message.get("id") or str(uuid4())
         with connect() as c:
-            c.execute("""INSERT INTO messages (id,sender_id,recipient_id,body,created_at)
-                VALUES(?,?,?,?,?)""",
-                (mid, message["sender_id"], message["recipient_id"], message["body"], message["created_at"]))
+            c.execute("""INSERT INTO messages (id,sender_id,recipient_id,case_id,body,created_at)
+                VALUES(?,?,?,?,?,?)""",
+                (mid, message["sender_id"], message["recipient_id"], message.get("case_id"),
+                 message["body"], message["created_at"]))
         with connect() as c:
             row = c.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()
         return _row_to_dict(row)
@@ -206,6 +220,31 @@ class SQLiteMessageRepository(MessageRepository):
         with connect() as c:
             rows = c.execute("""SELECT m.*,u.display_name FROM messages m JOIN users u ON u.id=m.sender_id
                 WHERE m.recipient_id=? ORDER BY m.created_at DESC""", (recipient_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_thread(self, user_a: str, user_b: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("""SELECT * FROM messages
+                WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)
+                ORDER BY created_at ASC""", (user_a, user_b, user_b, user_a)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_unread(self, recipient_id: str) -> int:
+        with connect() as c:
+            row = c.execute("""SELECT COUNT(*) n FROM messages
+                WHERE recipient_id=? AND read_at IS NULL""", (recipient_id,)).fetchone()
+        return int(row["n"])
+
+    def mark_thread_read(self, recipient_id: str, sender_id: str) -> None:
+        from app.auth.service import now
+        with connect() as c:
+            c.execute("""UPDATE messages SET read_at=? WHERE recipient_id=? AND sender_id=? AND read_at IS NULL""",
+                (now().isoformat(), recipient_id, sender_id))
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("""SELECT m.*,u.display_name FROM messages m JOIN users u ON u.id=m.sender_id
+                WHERE m.case_id=? ORDER BY m.created_at ASC""", (case_id,)).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -297,3 +336,133 @@ class SQLiteAuditRepository(AuditRepository):
         with connect() as c:
             rows = c.execute("SELECT * FROM audit_logs ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
+
+
+class SQLiteCalendarEventRepository(CalendarEventRepository):
+    def create(self, event: dict) -> dict:
+        eid = event.get("id") or str(uuid4())
+        with connect() as c:
+            c.execute("""INSERT INTO calendar_events
+                (id,case_id,owner_id,event_type,event_date,title,description,created_at)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                (eid, event["case_id"], event["owner_id"], event["event_type"], event["event_date"],
+                 event["title"], event.get("description"), event["created_at"]))
+            row = c.execute("SELECT * FROM calendar_events WHERE id=?", (eid,)).fetchone()
+        return _row_to_dict(row)
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM calendar_events WHERE case_id=? ORDER BY event_date ASC", (case_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_for_owner(self, owner_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM calendar_events WHERE owner_id=? ORDER BY event_date ASC", (owner_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_for_case(self, case_id: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM calendar_events WHERE case_id=?", (case_id,))
+
+
+class SQLiteTaskRepository(TaskRepository):
+    def create(self, task: dict) -> dict:
+        tid = task.get("id") or str(uuid4())
+        with connect() as c:
+            c.execute("""INSERT INTO tasks
+                (id,owner_id,case_id,task_key,title,description,due_date,status,priority,
+                 is_standard,is_custom,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (tid, task["owner_id"], task["case_id"], task.get("task_key"), task["title"],
+                 task.get("description"), task["due_date"], task.get("status", "pending"),
+                 task.get("priority", "normal"), int(task.get("is_standard", 1)), int(task.get("is_custom", 0)),
+                 task["created_at"], task["updated_at"]))
+        return self.get(tid)
+
+    def get(self, task_id: str) -> Optional[dict]:
+        with connect() as c:
+            row = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return _row_to_dict(row)
+
+    def update(self, task_id: str, values: dict) -> Optional[dict]:
+        if not values: return self.get(task_id)
+        cols = ",".join(f"{k}=?" for k in values)
+        with connect() as c:
+            c.execute(f"UPDATE tasks SET {cols} WHERE id=?", (*values.values(), task_id))
+        return self.get(task_id)
+
+    def list_for_case(self, case_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM tasks WHERE case_id=? ORDER BY due_date ASC", (case_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_for_owner(self, owner_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM tasks WHERE owner_id=? ORDER BY due_date ASC", (owner_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLiteTaskTemplateRepository(TaskTemplateRepository):
+    def upsert(self, template: dict) -> dict:
+        tid = template.get("id") or str(uuid4())
+        with connect() as c:
+            existing = c.execute("SELECT id FROM task_templates WHERE owner_id=? AND task_key=?",
+                (template["owner_id"], template["task_key"])).fetchone()
+            if existing:
+                c.execute("""UPDATE task_templates SET title=?,offset_days=?,priority=?,sort_order=?,
+                    is_active=?,updated_at=? WHERE id=?""",
+                    (template["title"], template["offset_days"], template.get("priority", "normal"),
+                     template.get("sort_order", 0), int(template.get("is_active", 1)),
+                     template["updated_at"], existing["id"]))
+                tid = existing["id"]
+            else:
+                c.execute("""INSERT INTO task_templates
+                    (id,owner_id,task_key,title,offset_days,priority,sort_order,is_active,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (tid, template["owner_id"], template["task_key"], template["title"],
+                     template["offset_days"], template.get("priority", "normal"), template.get("sort_order", 0),
+                     int(template.get("is_active", 1)), template["created_at"], template["updated_at"]))
+            row = c.execute("SELECT * FROM task_templates WHERE id=?", (tid,)).fetchone()
+        return _row_to_dict(row)
+
+    def list_for_owner(self, owner_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("""SELECT * FROM task_templates WHERE owner_id=? AND is_active=1
+                ORDER BY sort_order ASC""", (owner_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLiteTaskHistoryRepository(TaskHistoryRepository):
+    def create(self, record: dict) -> dict:
+        rid = record.get("id") or str(uuid4())
+        with connect() as c:
+            c.execute("""INSERT INTO task_history (id,task_id,actor_id,action,old_value,new_value,created_at)
+                VALUES(?,?,?,?,?,?,?)""",
+                (rid, record["task_id"], record.get("actor_id"), record["action"],
+                 record.get("old_value"), record.get("new_value"), record["created_at"]))
+            row = c.execute("SELECT * FROM task_history WHERE id=?", (rid,)).fetchone()
+        return _row_to_dict(row)
+
+    def list_for_task(self, task_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM task_history WHERE task_id=? ORDER BY created_at ASC", (task_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLitePermissionRepository(PermissionRepository):
+    def grant(self, user_id: str, permission: str, granted_by: Optional[str]) -> dict:
+        from app.auth.service import now
+        with connect() as c:
+            c.execute("""INSERT OR IGNORE INTO user_permissions (id,user_id,permission,granted_at,granted_by)
+                VALUES(?,?,?,?,?)""",
+                (str(uuid4()), user_id, permission, now().isoformat(), granted_by))
+        return {"user_id": user_id, "permission": permission}
+
+    def revoke(self, user_id: str, permission: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM user_permissions WHERE user_id=? AND permission=?", (user_id, permission))
+
+    def list_for_user(self, user_id: str) -> list[str]:
+        with connect() as c:
+            rows = c.execute("SELECT permission FROM user_permissions WHERE user_id=?", (user_id,)).fetchall()
+        return [r["permission"] for r in rows]

@@ -1,52 +1,174 @@
 
+import json
 from html import escape
+from datetime import datetime
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
-from app.auth.service import get_user_by_session, now
-from app.database import connect
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse
+from app.auth.service import get_user_by_session, now, cleanup_expired_pending
+from app.auth.permissions import (
+    is_admin, has_permission, require_permission, PERMISSIONS,
+    PERMISSION_LABELS, ASSIGNABLE_PERMISSIONS,
+)
 from app.database_layer import repos
 from app.web import page
 from app.customtemplates.service import list_all_templates
 from app.feepusula.service import list_tariffs, add_tariff, delete_tariff, CATEGORY_LABELS
 router=APIRouter()
 
+STATUS_LABELS={"pending":"Onay Bekliyor","active":"Aktif","suspicious":"Şüpheli","rejected":"Reddedildi","banned":"Yasaklı"}
+
+
+def staff(request):
+    """Admin paneline HİÇ girebilecek mi: süper admin ya da en az bir yetkisi olan biri."""
+    u=get_user_by_session(request.cookies.get("session"))
+    if not u:return None
+    if u.get("is_super_admin"):return u
+    if repos.permissions.list_for_user(u["id"]):return u
+    return None
+
+
 def admin(request):
+    """Geriye dönük uyum: eski kod tabanındaki tam-yetkili kontrol noktaları için.
+    Sadece süper admin döner (hassas işlemler - kullanıcı silme, yetki verme -
+    bu fonksiyonla korunmaya devam eder)."""
     u=get_user_by_session(request.cookies.get("session"))
     return u if u and u["is_super_admin"] else None
 
+
+def log(actor_id,action,target_id=None,details=""):
+    repos.audit.create({"actor_id":actor_id,"action":action,"target_id":target_id,
+                        "details":details,"created_at":now().isoformat()})
+
+
 @router.get("/",response_class=HTMLResponse)
 async def dashboard(request:Request):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    if not u:return HTMLResponse("Yetkisiz.",403)
+    cleanup_expired_pending()
+    can={p:require_permission(u,p) for p in PERMISSIONS}
     users=repos.users.list_all()
-    docs=repos.documents.list_all_with_owner_email()
+    plans=repos.plans.list_all()
+    plan_options={p["id"]:p["name"] for p in plans}
+    perms_by_user={x["id"]:set(repos.permissions.list_for_user(x["id"])) for x in users} if can["admins.manage"] else {}
+
     us=[]
     for r in users:
+        status_opts="".join(f'<option value="{k}"{" selected" if r["status"]==k else ""}>{v}</option>' for k,v in STATUS_LABELS.items())
+        status_form=""
+        if can["users.approve"] or can["users.reject"] or can["users.suspend"] or can["users.ban"]:
+            status_form=(f'<form method="post" action="/admin/users/{r["id"]}/status">'
+                        f'<select name="status">{status_opts}</select><button>Durumu Kaydet</button></form>')
+        plan_form=""
+        if can["plans.manage"]:
+            plan_opts="".join(f'<option value="{pid}"{" selected" if r["plan_id"]==pid else ""}>{name}</option>' for pid,name in plan_options.items())
+            plan_form=(f'<form method="post" action="/admin/users/{r["id"]}/plan">'
+                      f'<select name="plan_id">{plan_opts}</select><button>Plan Ata</button></form>')
+        perm_form=""
+        if can["admins.manage"] and not r.get("is_super_admin"):
+            checks="".join(
+                f'<label class="perm"><input type="checkbox" name="permission" value="{p}"'
+                f'{" checked" if p in perms_by_user.get(r["id"],set()) else ""}> {escape(PERMISSION_LABELS.get(p,p))}</label>'
+                for p in ASSIGNABLE_PERMISSIONS)
+            perm_form=(f'<details><summary>Yetkiler</summary><form method="post" action="/admin/users/{r["id"]}/permissions">'
+                      f'{checks}<button>Yetkileri Kaydet</button></form></details>')
+        message_link=f'<a href="/messages/thread/{r["id"]}">💬 Mesaj</a>' if can["messages.send"] else ""
+        delete_form=""
+        if can["users.ban"]:
+            delete_form=(f'<form method="post" action="/admin/users/{r["id"]}/delete" '
+                        f'onsubmit="return confirm(\'{escape(r["display_name"])} hesabı KALICI olarak silinsin mi?\')">'
+                        f'<button class="secondary">Hesabı Sil</button></form>')
         us.append(
-            f'<div class="card"><b>{r["display_name"]}</b> — {r["email"]}'
-            f'<p>Durum: {r["status"]} | Plan: {r["plan_id"]} | IP: {r["last_ip"] or "-"}</p>'
-            f'<form method="post" action="/admin/users/{r["id"]}/status">'
-            f'<select name="status"><option>pending</option><option>active</option>'
-            f'<option>suspicious</option><option>rejected</option><option>banned</option></select>'
-            f'<button>Durumu Kaydet</button></form></div>'
+            f'<div class="card"><b>{escape(r["display_name"])}</b> — {escape(r["email"])}'
+            f'<p>Durum: {STATUS_LABELS.get(r["status"],r["status"])} | Plan: {plan_options.get(r["plan_id"],r["plan_id"])} | IP: {r["last_ip"] or "-"}'
+            f'{" | 👑 Süper Admin" if r.get("is_super_admin") else ""}</p>'
+            f'<div class="actions">{status_form}{plan_form}</div>{perm_form}<p class="links">{message_link} {delete_form}</p></div>'
         )
     ds=[]
-    for r in docs:
-        ds.append(f'<div class="card"><b>{r["original_name"]}</b><p>{r["email"]} | {r["size_bytes"]} bytes</p>'
-                  f'<a href="/admin/documents/{r["id"]}">Belgeyi Gör/İndir</a></div>')
+    if can["files.view"]:
+        docs=repos.documents.list_all_with_owner_email()
+        for r in docs:
+            del_btn=(f'<form method="post" action="/admin/documents/{r["id"]}/delete" style="display:inline" '
+                    f'onsubmit="return confirm(\'Belge silinsin mi?\')"><button class="secondary">Sil</button></form>') if can["files.delete"] else ""
+            dl=f'<a href="/admin/documents/{r["id"]}">Gör/İndir</a>' if can["files.download"] else ""
+            ds.append(f'<div class="card"><b>{escape(r["original_name"])}</b><p>{escape(r["email"])} | {r["size_bytes"]} bytes</p>{dl} {del_btn}</div>')
     ts=[]
     for t in list_all_templates():
         paylasim = "Paylaşılan (ortak)" if t["is_shared"] else "Kişisel"
         ts.append(f'<div class="card"><b>{escape(t["name"])}</b>'
                   f'<p>{escape(t["owner_name"])} — {escape(t["owner_email"])} | {escape(paylasim)}</p>'
                   f'<a href="/admin/templates/{escape(t["id"])}">Şablonu Gör/İndir</a></div>')
-    return page("Admin","<h1>Yönetim</h1><h2>Üyeler</h2>"+''.join(us)+
-                "<h2>Yüklenen Belgeler</h2>"+''.join(ds)+
-                "<h2>Kullanıcı Şablonları (Tümü)</h2>"+(''.join(ts) or "<p>Henüz özel şablon yok.</p>")+
-                "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>")
+
+    audit_html=""
+    if can["audit.view"]:
+        audit_html='<h2>İşlem Geçmişi</h2><p><a href="/admin/audit"><button>Tüm Kayıtları Gör</button></a></p>'
+
+    backup_html='<h2>Tam Yedek</h2><p><a href="/admin/backup"><button>Tüm Sistemi JSON Olarak İndir</button></a></p>' if u.get("is_super_admin") else ""
+
+    body=(STYLE+"<h1>Yönetim</h1><h2>Üyeler</h2>"+"".join(us)+
+          (("<h2>Yüklenen Belgeler</h2>"+"".join(ds)) if can["files.view"] else "")+
+          "<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
+          "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>"+
+          audit_html+backup_html)
+    return page("Admin",body)
+
+
+STYLE='''<style>
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.actions form{margin:0}
+.perm{display:block;font-weight:normal;font-size:13px;margin:4px 0}
+details summary{cursor:pointer;font-weight:700;margin-top:8px}
+.links{margin-top:8px}
+</style>'''
+
+
+@router.get("/audit",response_class=HTMLResponse)
+async def audit_log(request:Request):
+    u=staff(request)
+    if not u or not require_permission(u,"audit.view"):return HTMLResponse("Yetkisiz.",403)
+    users_by_id={x["id"]:x for x in repos.users.list_all()}
+    rows=repos.audit.list_all()
+    items=[]
+    for r in rows:
+        actor=users_by_id.get(r.get("actor_id"))
+        actor_label=escape(actor["display_name"]) if actor else "Sistem"
+        target=users_by_id.get(r.get("target_id"))
+        target_label=f' → {escape(target["display_name"])}' if target else (f' → {escape(r["target_id"])}' if r.get("target_id") else "")
+        items.append(f'<div class="card"><b>{escape(r["action"])}</b> <span class="hint">{escape(r["created_at"])}</span>'
+                    f'<p>{actor_label}{target_label}</p>{f"<p class=\"hint\">{escape(r['details'])}</p>" if r.get("details") else ""}</div>')
+    return page("İşlem Geçmişi","<h1>İşlem Geçmişi</h1><p><a href=\"/admin/\">← Yönetime Dön</a></p>"+("".join(items) or "<p>Kayıt yok.</p>"))
+
+
+@router.get("/backup")
+async def full_backup(request:Request):
+    u=admin(request)
+    if not u:return HTMLResponse("Yetkisiz.",403)
+    data={
+        "exported_at": now().isoformat(),
+        "users": repos.users.list_all(),
+        "cases": [c for x in repos.users.list_all() for c in repos.cases.list_by_owner(x["id"])],
+        "documents": repos.documents.list_all_with_owner_email(),
+        "generated_documents": [d for x in repos.users.list_all() for d in repos.generated_documents.list_by_owner(x["id"])],
+        "templates": repos.templates.list_all(),
+        "messages": [m for x in repos.users.list_all() for m in repos.messages.list_for_user(x["id"])],
+        "tariffs": repos.tariffs.list_all(),
+        "plans": repos.plans.list_all(),
+        "audit_logs": repos.audit.list_all(),
+        "tasks": [t for x in repos.users.list_all() for t in repos.tasks.list_for_owner(x["id"])],
+        "task_templates": [t for x in repos.users.list_all() for t in repos.task_templates.list_for_owner(x["id"])],
+        "calendar_events": [e for x in repos.users.list_all() for e in repos.calendar_events.list_for_owner(x["id"])],
+        "user_permissions": {x["id"]: repos.permissions.list_for_user(x["id"]) for x in repos.users.list_all()},
+    }
+    log(u["id"],"full_backup_export",None,"Tam yedek indirildi.")
+    payload=json.dumps(data,ensure_ascii=False,indent=2,default=str)
+    filename=f"son-tutanak-tam-yedek-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    return HTMLResponse(payload,media_type="application/json",
+        headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
 
 @router.get("/tariffs",response_class=HTMLResponse)
 async def tariffs_page(request:Request):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    if not u or not require_permission(u,"plans.manage"):return HTMLResponse("Yetkisiz.",403)
     rows=list_tariffs()
     trs=[]
     for r in rows:
@@ -74,32 +196,86 @@ async def tariffs_page(request:Request):
 @router.post("/tariffs/add")
 async def add_tariff_row(request:Request,year:int=Form(...),category:str=Form(...),
                           min_parties:int=Form(...),max_parties:str=Form(""),unit_price:float=Form(...)):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    if not u or not require_permission(u,"plans.manage"):return HTMLResponse("Yetkisiz.",403)
     add_tariff(category,min_parties,int(max_parties) if max_parties.strip() else None,unit_price,year)
+    log(u["id"],"tariff_add",None,f"{category} {year}")
     return RedirectResponse("/admin/tariffs",303)
 
 @router.post("/tariffs/{tariff_id}/delete")
 async def remove_tariff_row(request:Request,tariff_id:str):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    if not u or not require_permission(u,"plans.manage"):return HTMLResponse("Yetkisiz.",403)
     delete_tariff(tariff_id)
+    log(u["id"],"tariff_delete",tariff_id)
     return RedirectResponse("/admin/tariffs",303)
 
 @router.get("/templates/{template_id}")
 async def download_template(request:Request,template_id:str):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    if not u:return HTMLResponse("Yetkisiz.",403)
     r=repos.templates.get(template_id)
     if not r:return HTMLResponse("Şablon bulunamadı.",404)
     return FileResponse(r["stored_path"],filename=r["name"]+".udf")
 
 @router.post("/users/{user_id}/status")
 async def status(request:Request,user_id:str,status:str=Form(...)):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    needed={"active":"users.approve","rejected":"users.reject","suspicious":"users.suspend","banned":"users.ban","pending":"users.approve"}
+    if not u or not require_permission(u,needed.get(status,"users.approve")):return HTMLResponse("Yetkisiz.",403)
+    target=repos.users.get(user_id)
+    old_status=target.get("status") if target else None
     repos.users.update(user_id,{"status":status,"approved_at":now().isoformat() if status=="active" else None})
+    log(u["id"],"status_change",user_id,f"{old_status} -> {status}")
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
+
+@router.post("/users/{user_id}/plan")
+async def assign_plan(request:Request,user_id:str,plan_id:str=Form(...)):
+    u=staff(request)
+    if not u or not require_permission(u,"plans.manage"):return HTMLResponse("Yetkisiz.",403)
+    repos.users.update(user_id,{"plan_id":plan_id})
+    log(u["id"],"plan_assign",user_id,plan_id)
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
+
+@router.post("/users/{user_id}/permissions")
+async def set_permissions(request:Request,user_id:str):
+    u=admin(request)  # admins.manage sadece süper admin - require_permission değil, kesin admin() kontrolü
+    if not u:return HTMLResponse("Yetkisiz. Sadece süper admin yetki atayabilir.",403)
+    target=repos.users.get(user_id)
+    if not target or target.get("is_super_admin"):return HTMLResponse("Bu kullanıcıya yetki ataması yapılamaz.",400)
+    form=await request.form()
+    selected=set(form.getlist("permission")) & set(ASSIGNABLE_PERMISSIONS)
+    current=set(repos.permissions.list_for_user(user_id))
+    for p in current-selected: repos.permissions.revoke(user_id,p)
+    for p in selected-current: repos.permissions.grant(user_id,p,u["id"])
+    log(u["id"],"permissions_update",user_id,", ".join(sorted(selected)) or "(hiçbiri)")
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
+
+@router.post("/users/{user_id}/delete")
+async def delete_user(request:Request,user_id:str):
+    u=staff(request)
+    if not u or not require_permission(u,"users.ban"):return HTMLResponse("Yetkisiz.",403)
+    target=repos.users.get(user_id)
+    if not target:return HTMLResponse("Kullanıcı bulunamadı.",404)
+    if target.get("is_super_admin"):return HTMLResponse("Süper admin hesabı silinemez.",400)
+    repos.users.delete(user_id)
+    log(u["id"],"user_delete",user_id,f"{target.get('email')} silindi.")
     return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
 
 @router.get("/documents/{doc_id}")
 async def download_document(request:Request,doc_id:str):
-    if not admin(request):return HTMLResponse("Yetkisiz.",403)
+    u=staff(request)
+    if not u or not require_permission(u,"files.download"):return HTMLResponse("Yetkisiz.",403)
     r=repos.documents.get(doc_id)
     if not r:return HTMLResponse("Belge bulunamadı.",404)
     return FileResponse(r["stored_path"],filename=r["original_name"])
+
+@router.post("/documents/{doc_id}/delete")
+async def remove_document(request:Request,doc_id:str):
+    u=staff(request)
+    if not u or not require_permission(u,"files.delete"):return HTMLResponse("Yetkisiz.",403)
+    r=repos.documents.get(doc_id)
+    if not r:return HTMLResponse("Belge bulunamadı.",404)
+    repos.documents.delete(doc_id)
+    log(u["id"],"document_delete",doc_id,r.get("original_name"))
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')

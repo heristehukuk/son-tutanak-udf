@@ -40,7 +40,9 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS cases (
             id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            file_no TEXT, application_no TEXT, title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            file_no TEXT, application_no TEXT, title TEXT,
+            file_type TEXT, start_date TEXT, status TEXT NOT NULL DEFAULT 'open', case_data_json TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL,
@@ -51,7 +53,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS generated_documents (
             id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL,
             owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            original_template TEXT NOT NULL, stored_path TEXT NOT NULL, created_at TEXT NOT NULL
+            original_template TEXT NOT NULL, stored_path TEXT NOT NULL, doc_kind TEXT, created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -60,8 +62,46 @@ def init_db():
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY, sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            case_id TEXT REFERENCES cases(id) ON DELETE SET NULL,
             body TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL, event_date TEXT NOT NULL,
+            title TEXT NOT NULL, description TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS task_templates (
+            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            task_key TEXT NOT NULL, title TEXT NOT NULL, offset_days INTEGER NOT NULL DEFAULT 0,
+            priority TEXT NOT NULL DEFAULT 'normal', sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            UNIQUE(owner_id, task_key)
+        );
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            task_key TEXT, title TEXT NOT NULL, description TEXT, due_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'normal',
+            is_standard INTEGER NOT NULL DEFAULT 1, is_custom INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT, cancelled_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS task_history (
+            id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            actor_id TEXT REFERENCES users(id) ON DELETE SET NULL, action TEXT NOT NULL,
+            old_value TEXT, new_value TEXT, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS user_permissions (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission TEXT NOT NULL, granted_at TEXT NOT NULL, granted_by TEXT,
+            UNIQUE(user_id, permission)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_owner_case ON tasks(owner_id, case_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(owner_id, due_date, status);
+        CREATE INDEX IF NOT EXISTS idx_calendar_events_case ON calendar_events(case_id);
+        CREATE INDEX IF NOT EXISTS idx_calendar_events_owner_date ON calendar_events(owner_id, event_date);
+        CREATE INDEX IF NOT EXISTS idx_messages_case ON messages(case_id);
+        CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
         CREATE TABLE IF NOT EXISTS surveys (
             id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
         );
@@ -96,3 +136,14 @@ def init_db():
         cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
         if "iban" not in cols:
             c.execute("ALTER TABLE users ADD COLUMN iban TEXT")
+        case_cols = [r["name"] for r in c.execute("PRAGMA table_info(cases)").fetchall()]
+        for col, ddl in (("file_type","TEXT"),("start_date","TEXT"),
+                          ("status","TEXT NOT NULL DEFAULT 'open'"),("case_data_json","TEXT")):
+            if col not in case_cols:
+                c.execute(f"ALTER TABLE cases ADD COLUMN {col} {ddl}")
+        gd_cols = [r["name"] for r in c.execute("PRAGMA table_info(generated_documents)").fetchall()]
+        if "doc_kind" not in gd_cols:
+            c.execute("ALTER TABLE generated_documents ADD COLUMN doc_kind TEXT")
+        msg_cols = [r["name"] for r in c.execute("PRAGMA table_info(messages)").fetchall()]
+        if "case_id" not in msg_cols:
+            c.execute("ALTER TABLE messages ADD COLUMN case_id TEXT REFERENCES cases(id) ON DELETE SET NULL")

@@ -1,6 +1,6 @@
 import os
 
-import io, os, re, urllib.parse
+import io, os, re, json, urllib.parse
 import pytesseract
 from pathlib import Path
 from fastapi import FastAPI, Request, UploadFile, File
@@ -25,11 +25,14 @@ from app.documents.engine import (
     read_udf, extract, render_editor, form_state, merge_state, template_bytes, TEMPLATES,
     extract_any_source, standard_result, set_parties_and_signatures, replace_meeting_paragraph,
     build_meeting_sentence, replace_final_legal_paragraph, fill_general, replace_talep_in_narrative,
-    update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template
+    update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template,
+    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND,
 )
 from app.web import page
 from app.supabase_client import supabase_health
-app=FastAPI(title="Son Tutanak UDF Asistanı v16")
+from app.modules.calendar.router import router as calendar_router
+from app.modules.tasks.router import router as tasks_router
+app=FastAPI(title="Son Tutanak UDF Asistanı v17")
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
 app.include_router(admin_router,prefix="/admin")
@@ -38,6 +41,8 @@ app.include_router(surveys_router,prefix="/surveys")
 app.include_router(plans_router,prefix="/plans")
 app.include_router(templates_router,prefix="/templates")
 app.include_router(feepusula_router,prefix="/harcama-pusulasi")
+app.include_router(calendar_router)
+app.include_router(tasks_router)
 
 @app.on_event("startup")
 async def startup():
@@ -80,9 +85,13 @@ async def supabase_health_check():
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
     u=current_user(request)
+    if u:
+        from app.auth.service import cleanup_expired_pending
+        cleanup_expired_pending()
+        u=current_user(request)  # durumu değişmiş olabilir (pending->rejected)
     if not u:
         return page("Son Tutanak UDF Asistanı",
-        """<div class="card narrow"><h1>Son Tutanak UDF Asistanı v16</h1>
+        """<div class="card narrow"><h1>Son Tutanak UDF Asistanı v17</h1>
         <p>Başvuru formu yükleyin; UDF, PDF, JPG, JPEG veya PNG belgelerinden bilgileri çekin.</p>
         <p><a href="/auth/login"><button>Giriş Yap</button></a>
         <a href="/auth/register"><button>Üyelik Başvurusu</button></a></p></div>""")
@@ -95,12 +104,14 @@ async def home(request:Request):
         '<div class="card narrow"><h1>Hesabınız incelemede</h1><p>Yönetici açıklama istemiş olabilir. Mesajlar bölümünü kontrol edin.</p>'
         '<p><a href="/messages/">Mesajlara Git</a></p></div>')
     return page("Son Tutanak UDF Asistanı",
-    f"""<div class="card"><h1>Son Tutanak UDF Asistanı v16</h1><p>Hoş geldiniz, {u["display_name"]}.</p>
+    f"""<div class="card"><h1>Son Tutanak UDF Asistanı v17</h1><p>Hoş geldiniz, {u["display_name"]}.</p>
     <form action="/edit" method="post" enctype="multipart/form-data">
     <label>Başvuru formu / kaynak belge</label>
     <input type="file" name="file" accept=".udf,.pdf,.jpg,.jpeg,.png" required>
     <button>Belgeyi Analiz Et</button></form>
-    <p><a href="/files/">Dosyalarım</a> · <a href="/messages/">Mesajlar</a> · <a href="/plans/">Planlar</a>
+    <p><a href="/files/">Dosyalarım</a> · <a href="/tasks/">Görevler</a> · <a href="/calendar">Takvim</a> ·
+    <a href="/messages/">Mesajlar{f' <span class="badge">{unread}</span>' if (unread:=repos.messages.count_unread(u["id"])) else ''}</a> ·
+    <a href="/plans/">Planlar</a>
     {' · <a href="/admin/">Admin</a>' if u["is_super_admin"] else ''}</p></div>""")
 
 @app.post("/edit",response_class=HTMLResponse)
@@ -117,7 +128,7 @@ async def edit(request:Request,file:UploadFile=File(...)):
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         values,respondents=extract(text)
-        cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya")
+        cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya",values.get("dosyaTuru"))
         save_document(u["id"],data,file.filename or "kaynak",kind,cid)
         html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]))
         html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
@@ -156,7 +167,13 @@ async def build(request:Request):
         if not consume(u["id"],"udf",plan["limits"].get("udf.monthly")):return HTMLResponse("Aylık UDF oluşturma limitiniz dolmuştur.",429)
         if not values.get("sonuc"):values["sonuc"]=standard_result(choice)
         is_bracket_template=False
-        if choice.startswith("tpl_"):
+        doc_kind=None
+        if choice.startswith("folder__"):
+            entry=discover_folder_templates().get(choice)
+            if not entry:return HTMLResponse("Seçilen şablon sunucuda bulunamadı (klasörden kaldırılmış olabilir).",400)
+            data=entry["path"].read_bytes();source_name=entry["path"].stem
+            doc_kind=entry["doc_kind"];is_bracket_template=True
+        elif choice.startswith("tpl_"):
             row=get_template(choice[len("tpl_"):])
             if not row or not can_use_template(row,u):return HTMLResponse("Bu şablona erişim yetkiniz yok.",403)
             data=get_template_bytes(row);source_name=re.sub(r'\.udf$','',row["name"],flags=re.I) or "son_tutanak"
@@ -165,7 +182,9 @@ async def build(request:Request):
             upload=form.get("custom_file")
             if not isinstance(upload,UploadFile):return HTMLResponse("Özel UDF şablonu yükleyin.",400)
             data=await upload.read();source_name=Path(upload.filename or "son_tutanak").stem
-        else:data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
+        else:
+            data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
+            doc_kind=FIXED_TEMPLATE_DOC_KIND
         xml,old,files=read_udf(data)
         # "custom" (tek seferlik) yüklemede de köşeli parantez varsa yeni motoru kullan.
         if choice=="custom" and not is_bracket_template:
@@ -195,11 +214,15 @@ async def build(request:Request):
             result=build_udf(files,xml,old,new)
         cid=str(form.get("case_id") or "")
         if cid:
-            save_generated(u["id"],cid,result,TEMPLATES.get(choice,("Özel Son Tutanak","",""))[0])
+            template_label=TEMPLATES.get(choice,(None,))[0] or (discover_folder_templates().get(choice) or {}).get("label") or "Özel Son Tutanak"
+            save_generated(u["id"],cid,result,template_label,doc_kind=doc_kind)
             case=repos.cases.get(cid)
             if case and case["owner_id"]==u["id"]:
                 repos.cases.update(cid,{"file_no":values.get("dosyaNo"),"application_no":values.get("basvuruNo"),
-                                        "title":values.get("basvurucuAdiSoyadi") or "Dosya","updated_at":now().isoformat()})
+                                        "title":values.get("basvurucuAdiSoyadi") or "Dosya",
+                                        "file_type":values.get("dosyaTuru") or case.get("file_type"),
+                                        "case_data_json":json.dumps(values,ensure_ascii=False),
+                                        "updated_at":now().isoformat()})
         name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+"_hazir.udf"
         ascii_fallback=re.sub(r'[^A-Za-z0-9_.-]','_',name) or "son_tutanak_hazir.udf"
         quoted=urllib.parse.quote(name)

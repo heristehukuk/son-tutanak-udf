@@ -8,6 +8,28 @@ from app.auth.security import hash_password, verify_password
 def now():
     return datetime.now(timezone.utc)
 
+PENDING_EXPIRY_HOURS = 48
+
+def cleanup_expired_pending():
+    """48 saatten uzun süredir 'pending' (onay bekleyen) kalan üyelikleri
+    otomatik olarak 'rejected' durumuna alır. Gerçek bir zamanlayıcı
+    (background scheduler) yerine "lazy check" kullanılıyor - yani bu
+    fonksiyon bir sayfa yüklendiğinde çağrılır (bkz. app/main.py home(),
+    app/admin/routes.py dashboard()). Render gibi platformlarda sürekli
+    çalışan bir arka plan görevi garanti olmadığından bu daha güvenilir."""
+    cutoff = (now() - timedelta(hours=PENDING_EXPIRY_HOURS)).isoformat()
+    expired = []
+    for u in repos.users.list_all():
+        if u.get("status") == "pending" and (u.get("created_at") or "") < cutoff:
+            repos.users.update(u["id"], {"status": "rejected"})
+            repos.audit.create({
+                "actor_id": None, "action": "auto_reject_expired_pending",
+                "target_id": u["id"], "details": "48 saat içinde onaylanmadığı için otomatik reddedildi.",
+                "created_at": now().isoformat(),
+            })
+            expired.append(u["id"])
+    return expired
+
 def create_user(email, display_name, password, ip=""):
     user_id = str(uuid4())
     pw = hash_password(password)

@@ -27,7 +27,9 @@ class Repositories:
                 SupabaseUserRepository, SupabaseSessionRepository, SupabaseCaseRepository,
                 SupabaseDocumentRepository, SupabaseGeneratedDocumentRepository, SupabaseTemplateRepository,
                 SupabaseMessageRepository, SupabaseTariffRepository, SupabaseAuditRepository,
-                SupabasePlanRepository, SupabaseUsageRepository,
+                SupabasePlanRepository, SupabaseUsageRepository, SupabaseCalendarEventRepository,
+                SupabaseTaskRepository, SupabaseTaskTemplateRepository, SupabaseTaskHistoryRepository,
+                SupabasePermissionRepository,
             )
             self.users = SupabaseUserRepository()
             self.sessions = SupabaseSessionRepository()
@@ -40,12 +42,19 @@ class Repositories:
             self.audit = SupabaseAuditRepository()
             self.plans = SupabasePlanRepository()
             self.usage = SupabaseUsageRepository()
+            self.calendar_events = SupabaseCalendarEventRepository()
+            self.tasks = SupabaseTaskRepository()
+            self.task_templates = SupabaseTaskTemplateRepository()
+            self.task_history = SupabaseTaskHistoryRepository()
+            self.permissions = SupabasePermissionRepository()
         else:
             from app.database_layer.sqlite_repository import (
                 SQLiteUserRepository, SQLiteSessionRepository, SQLiteCaseRepository,
                 SQLiteDocumentRepository, SQLiteGeneratedDocumentRepository, SQLiteTemplateRepository,
                 SQLiteMessageRepository, SQLiteTariffRepository, SQLiteAuditRepository,
-                SQLitePlanRepository, SQLiteUsageRepository,
+                SQLitePlanRepository, SQLiteUsageRepository, SQLiteCalendarEventRepository,
+                SQLiteTaskRepository, SQLiteTaskTemplateRepository, SQLiteTaskHistoryRepository,
+                SQLitePermissionRepository,
             )
             self.users = SQLiteUserRepository()
             self.sessions = SQLiteSessionRepository()
@@ -58,6 +67,11 @@ class Repositories:
             self.audit = SQLiteAuditRepository()
             self.plans = SQLitePlanRepository()
             self.usage = SQLiteUsageRepository()
+            self.calendar_events = SQLiteCalendarEventRepository()
+            self.tasks = SQLiteTaskRepository()
+            self.task_templates = SQLiteTaskTemplateRepository()
+            self.task_history = SQLiteTaskHistoryRepository()
+            self.permissions = SQLitePermissionRepository()
 
 
 # Tek, paylaşılan örnek (singleton).

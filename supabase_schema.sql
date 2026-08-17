@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS cases (
     file_no          TEXT,
     application_no   TEXT,
     title            TEXT,
+    file_type        TEXT,
+    start_date       TEXT,
+    status           TEXT NOT NULL DEFAULT 'open',
+    case_data_json   TEXT,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );
@@ -83,7 +87,70 @@ CREATE TABLE IF NOT EXISTS generated_documents (
     owner_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     original_template  TEXT NOT NULL,
     stored_path        TEXT NOT NULL,
+    doc_kind           TEXT,
     created_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+    id           TEXT PRIMARY KEY,
+    case_id      TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    owner_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_type   TEXT NOT NULL,
+    event_date   TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    description  TEXT,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_templates (
+    id           TEXT PRIMARY KEY,
+    owner_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    task_key     TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    offset_days  INTEGER NOT NULL DEFAULT 0,
+    priority     TEXT NOT NULL DEFAULT 'normal',
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    is_active    INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    UNIQUE(owner_id, task_key)
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id            TEXT PRIMARY KEY,
+    owner_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_id       TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    task_key      TEXT,
+    title         TEXT NOT NULL,
+    description   TEXT,
+    due_date      TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    priority      TEXT NOT NULL DEFAULT 'normal',
+    is_standard   INTEGER NOT NULL DEFAULT 1,
+    is_custom     INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    completed_at  TEXT,
+    cancelled_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_history (
+    id          TEXT PRIMARY KEY,
+    task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    actor_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+    action      TEXT NOT NULL,
+    old_value   TEXT,
+    new_value   TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_permissions (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission   TEXT NOT NULL,
+    granted_at   TEXT NOT NULL,
+    granted_by   TEXT,
+    UNIQUE(user_id, permission)
 );
 
 CREATE TABLE IF NOT EXISTS usage (
@@ -99,6 +166,7 @@ CREATE TABLE IF NOT EXISTS messages (
     id            TEXT PRIMARY KEY,
     sender_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     recipient_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_id       TEXT REFERENCES cases(id) ON DELETE SET NULL,
     body          TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     read_at       TEXT
@@ -187,6 +255,26 @@ CREATE INDEX IF NOT EXISTS idx_usage_user_metric_period ON usage(user_id, metric
 CREATE INDEX IF NOT EXISTS idx_messages_recipient_id ON messages(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_fee_tariffs_category_year ON fee_tariffs(category, year);
+CREATE INDEX IF NOT EXISTS idx_tasks_owner_case ON tasks(owner_id, case_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(owner_id, due_date, status);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_case ON calendar_events(case_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_owner_date ON calendar_events(owner_id, event_date);
+CREATE INDEX IF NOT EXISTS idx_messages_case ON messages(case_id);
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+
+-- =====================================================================
+-- GERIYE DONUK UYUM: Bu blok, daha once bu semayi calistirip Supabase
+-- projesini kurmus olanlar icindir. Yeni sutunlari/tablolari, mevcut
+-- veriyi bozmadan ekler. CREATE TABLE bloklarindaki IF NOT EXISTS zaten
+-- yeni kurulumlarda bu blogu gereksiz kilar, calistirmak her durumda
+-- guvenlidir.
+-- =====================================================================
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS file_type TEXT;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS start_date TEXT;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS case_data_json TEXT;
+ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS doc_kind TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) ON DELETE SET NULL;
 
 -- =====================================================================
 -- ONEMLI: Bu tablolara sadece backend (SUPABASE_SECRET_KEY / service_role

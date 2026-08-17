@@ -587,6 +587,38 @@ TEMPLATES={
  'anlasmama_son_tutanagi':('Anlaşmama Son Tutanağı','anlasmama_son_tutanagi.udf','ANLAŞMAMA'),
  'anlasma_belgesi':('Anlaşma Tutanağı (Anlaşma Belgesi)','anlasma_belgesi.udf','ANLAŞMA BELGESİ')}
 TEMPLATE_DIR=Path(__file__).resolve().parents[1]/'templates'/'udf'
+# Sabit 3 şablonun hepsi "Son Tutanak" türündendir (belge oluşturma takibi/checklist için).
+FIXED_TEMPLATE_DOC_KIND='son_tutanak'
+
+DOC_KIND_LABELS={
+    'son_tutanak':'Son Tutanak',
+    'davet_mektubu':'Davet Mektubu',
+    'ust_yazi':'Üst Yazı',
+    'ucret_pusulasi':'Ücret Pusulası',
+}
+
+def discover_folder_templates():
+    """templates/udf/<doc_kind>/*.udf klasörlerini otomatik tarar.
+
+    Kullanıcı bu klasörlerden birine (veya yeni bir isimle açacağı bir klasöre)
+    UDF şablonu bıraktığında, sistem onu ayrıca kodlamaya gerek kalmadan
+    tanır ve düzenleme ekranındaki "Belge türü" listesine ekler. Klasör adı
+    doğrudan belgenin türünü (doc_kind) belirler; bu değer üretilen belgeyle
+    birlikte kaydedilir ve dosya sayfasındaki "hangi evraklar hazır" takibinde
+    kullanılır.
+
+    Dönüş: {choice_value: {'doc_kind':str,'path':Path,'label':str}}
+    """
+    registry={}
+    if not TEMPLATE_DIR.exists():return registry
+    for sub in sorted(TEMPLATE_DIR.iterdir()):
+        if not sub.is_dir() or sub.name=='users_sablon':continue
+        doc_kind=sub.name
+        for f in sorted(sub.glob('*.udf')):
+            slug=re.sub(r'[^a-zA-Z0-9]+','_',f.stem).strip('_').lower()
+            choice=f"folder__{doc_kind}__{slug}"
+            registry[choice]={'doc_kind':doc_kind,'path':f,'label':f.stem.replace('_',' ')}
+    return registry
 
 def template_bytes(choice):
     if choice=='custom':return None
@@ -1016,6 +1048,8 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
         resp_html+=f'<section class="card respondent-card">{h}{body}</section>'
 
     options=''.join(f'<option value="{escape(k)}">{escape(v[0])}</option>' for k,v in TEMPLATES.items())
+    options+=''.join(f'<option value="{escape(choice)}">{escape(t["label"])} ({escape(DOC_KIND_LABELS.get(t["doc_kind"],t["doc_kind"]))})</option>'
+                      for choice,t in discover_folder_templates().items())
     options+=''.join(f'<option value="tpl_{escape(t["id"])}">{escape(t["name"])} (Kendi Şablonum)</option>' for t in (custom_templates or []))
     msg=f'<div class="ok">{escape(message)}</div>' if message else ''
     html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>

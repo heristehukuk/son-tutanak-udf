@@ -7,9 +7,9 @@ Supabase'e, oradan da kendi PostgreSQL sunucunuza geçerken uygulamanın geri ka
 dokunmamız gerekmeyecek - sadece bu arayüzlerin YENİ bir uygulaması (implementation)
 yazılacak (örn. SupabaseUserRepository), mevcut kod aynı kalacak.
 
-ÖNEMLİ: Bu dosya şu an hiçbir yerde KULLANILMIYOR. Mevcut auth/files/admin vb. modülleri
-hâlâ eskisi gibi app/database.py + sqlite3 ile doğrudan çalışıyor. Bu, kasıtlı bir tercih:
-riskli olan "mevcut kodu bu katmana bağlama" adımını ayrı ve dikkatli yapacağız.
+Uygulamanın tamamı (auth/files/admin/messaging/calendar/tasks vb.) bu arayüzler
+üzerinden çalışır; hangi implementasyonun (SQLite/Supabase) aktif olduğunu
+`app/database_layer/__init__.py` DB_BACKEND ortam değişkenine göre seçer.
 """
 
 from abc import ABC, abstractmethod
@@ -31,6 +31,9 @@ class UserRepository(ABC):
 
     @abstractmethod
     def list_all(self) -> list[dict]: ...
+
+    @abstractmethod
+    def delete(self, user_id: str) -> None: ...
 
 
 class SessionRepository(ABC):
@@ -73,6 +76,9 @@ class DocumentRepository(ABC):
         """Admin paneli için: her belgeyi sahibinin e-postasıyla birlikte döner."""
         ...
 
+    @abstractmethod
+    def delete(self, document_id: str) -> None: ...
+
 
 class GeneratedDocumentRepository(ABC):
     @abstractmethod
@@ -110,6 +116,78 @@ class MessageRepository(ABC):
     def list_inbox_with_sender_name(self, recipient_id: str) -> list[dict]:
         """Gelen kutusu: her mesajı gönderenin adıyla birlikte döner."""
         ...
+
+    @abstractmethod
+    def list_thread(self, user_a: str, user_b: str) -> list[dict]:
+        """İki kullanıcı arasındaki tüm mesajlar, kronolojik sırayla."""
+        ...
+
+    @abstractmethod
+    def count_unread(self, recipient_id: str) -> int: ...
+
+    @abstractmethod
+    def mark_thread_read(self, recipient_id: str, sender_id: str) -> None: ...
+
+    @abstractmethod
+    def list_for_case(self, case_id: str) -> list[dict]: ...
+
+
+class CalendarEventRepository(ABC):
+    @abstractmethod
+    def create(self, event: dict) -> dict: ...
+
+    @abstractmethod
+    def list_for_case(self, case_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def list_for_owner(self, owner_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def delete_for_case(self, case_id: str) -> None: ...
+
+
+class TaskRepository(ABC):
+    @abstractmethod
+    def create(self, task: dict) -> dict: ...
+
+    @abstractmethod
+    def get(self, task_id: str) -> Optional[dict]: ...
+
+    @abstractmethod
+    def update(self, task_id: str, values: dict) -> Optional[dict]: ...
+
+    @abstractmethod
+    def list_for_case(self, case_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def list_for_owner(self, owner_id: str) -> list[dict]: ...
+
+
+class TaskTemplateRepository(ABC):
+    @abstractmethod
+    def upsert(self, template: dict) -> dict: ...
+
+    @abstractmethod
+    def list_for_owner(self, owner_id: str) -> list[dict]: ...
+
+
+class TaskHistoryRepository(ABC):
+    @abstractmethod
+    def create(self, record: dict) -> dict: ...
+
+    @abstractmethod
+    def list_for_task(self, task_id: str) -> list[dict]: ...
+
+
+class PermissionRepository(ABC):
+    @abstractmethod
+    def grant(self, user_id: str, permission: str, granted_by: Optional[str]) -> dict: ...
+
+    @abstractmethod
+    def revoke(self, user_id: str, permission: str) -> None: ...
+
+    @abstractmethod
+    def list_for_user(self, user_id: str) -> list[str]: ...
 
 
 class PlanRepository(ABC):

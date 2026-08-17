@@ -7,6 +7,7 @@ nav{background:#17212b;color:white;padding:14px 5%;display:flex;gap:18px;align-i
 .wrap{max-width:1100px;margin:28px auto;padding:0 18px}.card{background:white;border-radius:14px;padding:20px;margin:15px 0;box-shadow:0 3px 18px #0001}
 .narrow{max-width:520px;margin:40px auto}input,textarea,select{width:100%;padding:11px;border:1px solid #ccd4dc;border-radius:8px;margin:6px 0 12px;font:inherit}
 button{background:#1769e0;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-weight:700;cursor:pointer}.err{color:#a11}.ok{color:#176b35}
+.badge{background:#dc2626;color:#fff;border-radius:999px;padding:1px 8px;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
 """
 
