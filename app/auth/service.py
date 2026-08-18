@@ -63,6 +63,20 @@ def get_user_by_session(token):
         return None
     return repos.users.get(session["user_id"])
 
+def require_active_user(token):
+    """get_user_by_session ile AYNI şeyi yapar, ama ek olarak kullanıcının
+    durumunu da kontrol eder: banned ya da rejected ise None döner - oturum
+    token'ı hâlâ geçerli olsa bile (ör. admin kullanıcıyı banladıktan sonra,
+    eski oturumu süresi dolana kadar erişimini korumasın diye). Dosyalar,
+    mesajlaşma, özel şablonlar, ücret pusulası gibi kullanıcı verisine
+    erişen TÜM route'lar bunu kullanmalı - sadece görüntüleme amaçlı,
+    duruma göre farklı sayfa göstermek isteyen main.py'nin home() fonksiyonu
+    gibi özel durumlar dışında."""
+    u = get_user_by_session(token)
+    if not u or u["status"] in ("banned", "rejected"):
+        return None
+    return u
+
 def delete_session(token):
     if token:
         repos.sessions.delete(token)
