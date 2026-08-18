@@ -172,6 +172,11 @@ class SupabaseGeneratedDocumentRepository(GeneratedDocumentRepository):
         r = c.table("generated_documents").select("*").eq("owner_id", owner_id).order("created_at", desc=True).execute()
         return r.data or []
 
+    def get(self, document_id: str) -> Optional[dict]:
+        c = get_supabase()
+        r = c.table("generated_documents").select("*").eq("id", document_id).execute()
+        return _first(r.data)
+
 
 class SupabaseTemplateRepository(TemplateRepository):
     def create(self, template: dict) -> dict:

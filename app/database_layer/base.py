@@ -105,6 +105,9 @@ class GeneratedDocumentRepository(ABC):
     def create(self, document: dict) -> dict: ...
 
     @abstractmethod
+    def get(self, document_id: str) -> Optional[dict]: ...
+
+    @abstractmethod
     def list_by_owner(self, owner_id: str) -> list[dict]: ...
 
 

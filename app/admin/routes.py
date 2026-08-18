@@ -3,8 +3,9 @@ import json
 from html import escape
 from datetime import datetime
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, Response, RedirectResponse, JSONResponse
 from app.auth.service import get_user_by_session, now, cleanup_expired_pending
+from app.storage import storage
 from app.auth.permissions import (
     is_admin, has_permission, require_permission, PERMISSIONS,
     PERMISSION_LABELS, ASSIGNABLE_PERMISSIONS,
@@ -228,7 +229,9 @@ async def download_template(request:Request,template_id:str):
     if not u:return HTMLResponse("Yetkisiz.",403)
     r=repos.templates.get(template_id)
     if not r:return HTMLResponse("Şablon bulunamadı.",404)
-    return FileResponse(r["stored_path"],filename=r["name"]+".udf")
+    data=storage.read(r["stored_path"])
+    return Response(data,media_type="application/octet-stream",
+                    headers={"Content-Disposition":f'attachment; filename="{r["name"]}.udf"'})
 
 @router.post("/cases/{case_id}/registry-no")
 async def set_registry_no(request:Request,case_id:str,registry_no:str=Form(...)):
@@ -295,7 +298,9 @@ async def download_document(request:Request,doc_id:str):
     if not u or not require_permission(u,"files.download"):return HTMLResponse("Yetkisiz.",403)
     r=repos.documents.get(doc_id)
     if not r:return HTMLResponse("Belge bulunamadı.",404)
-    return FileResponse(r["stored_path"],filename=r["original_name"])
+    data=storage.read(r["stored_path"])
+    return Response(data,media_type="application/octet-stream",
+                    headers={"Content-Disposition":f'attachment; filename="{r["original_name"]}"'})
 
 @router.post("/documents/{doc_id}/delete")
 async def remove_document(request:Request,doc_id:str):

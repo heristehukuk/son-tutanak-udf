@@ -177,6 +177,11 @@ class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
             rows = c.execute("SELECT * FROM generated_documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def get(self, document_id: str) -> Optional[dict]:
+        with connect() as c:
+            row = c.execute("SELECT * FROM generated_documents WHERE id=?", (document_id,)).fetchone()
+        return _row_to_dict(row)
+
 
 class SQLiteTemplateRepository(TemplateRepository):
     def create(self, template: dict) -> dict:

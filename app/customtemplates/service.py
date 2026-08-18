@@ -2,26 +2,26 @@
 import json
 from pathlib import Path
 from uuid import uuid4
-from app.database import CUSTOM_TEMPLATE_DIR
 from app.database_layer import repos
 from app.auth.service import now
 from app.documents.engine import scan_custom_template
+from app.storage import storage
 
 MAX_NAME_LEN = 120
 
 def create_template(owner_id, name, is_shared, data):
-    """UDF şablonunu tarar (köşeli parantezleri çözer), diske kaydeder, DB satırı oluşturur.
+    """UDF şablonunu tarar (köşeli parantezleri çözer), depoya kaydeder, DB satırı oluşturur.
     Dönüş: (template_id, recognized, unrecognized)"""
     from app.documents.engine import read_udf
     _, old_text, _ = read_udf(data)
     recognized, unrecognized = scan_custom_template(old_text)
     tid = str(uuid4())
-    path = CUSTOM_TEMPLATE_DIR / (tid + ".udf")
-    path.write_bytes(data)
+    key = f"templates/{tid}.udf"
+    storage.save(key, data)
     clean_name = (name or "Adsız Şablon").strip()[:MAX_NAME_LEN] or "Adsız Şablon"
     repos.templates.create({
         "id":tid,"owner_id":owner_id,"name":clean_name,"is_shared":1 if is_shared else 0,
-        "stored_path":str(path),"recognized_json":json.dumps(recognized,ensure_ascii=False),
+        "stored_path":key,"recognized_json":json.dumps(recognized,ensure_ascii=False),
         "unrecognized_json":json.dumps(unrecognized,ensure_ascii=False),"created_at":now().isoformat(),
     })
     return tid, recognized, unrecognized
@@ -38,7 +38,7 @@ def get_template(template_id):
     return repos.templates.get(template_id)
 
 def get_template_bytes(row):
-    return Path(row["stored_path"]).read_bytes()
+    return storage.read(row["stored_path"])
 
 def can_use_template(row, user):
     """Kullanıcı bu şablonu şablon seçiminde kullanabilir mi? (kendisininki, paylaşılan, ya da admin)"""
@@ -54,7 +54,7 @@ def delete_template(template_id, user):
     if row["owner_id"] != user["id"] and not user["is_super_admin"]:
         return False
     try:
-        Path(row["stored_path"]).unlink(missing_ok=True)
+        storage.delete(row["stored_path"])
     except Exception:
         pass
     repos.templates.delete(template_id)
