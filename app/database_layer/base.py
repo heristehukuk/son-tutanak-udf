@@ -92,6 +92,9 @@ class DocumentRepository(ABC):
     def list_by_owner(self, owner_id: str) -> list[dict]: ...
 
     @abstractmethod
+    def list_by_case(self, case_id: str) -> list[dict]: ...
+
+    @abstractmethod
     def list_all_with_owner_email(self) -> list[dict]:
         """Admin paneli için: her belgeyi sahibinin e-postasıyla birlikte döner."""
         ...
@@ -109,6 +112,12 @@ class GeneratedDocumentRepository(ABC):
 
     @abstractmethod
     def list_by_owner(self, owner_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def list_by_case(self, case_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def delete(self, document_id: str) -> None: ...
 
 
 class TemplateRepository(ABC):
@@ -153,6 +162,9 @@ class MessageRepository(ABC):
 
     @abstractmethod
     def list_for_case(self, case_id: str) -> list[dict]: ...
+
+    @abstractmethod
+    def delete_for_case(self, case_id: str) -> None: ...
 
 
 class CalendarEventRepository(ABC):

@@ -140,6 +140,11 @@ class SupabaseDocumentRepository(DocumentRepository):
         r = c.table("documents").select("*").eq("owner_id", owner_id).order("created_at", desc=True).execute()
         return r.data or []
 
+    def list_by_case(self, case_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("documents").select("*").eq("case_id", case_id).execute()
+        return r.data or []
+
     def delete(self, document_id: str) -> None:
         c = get_supabase()
         c.table("documents").delete().eq("id", document_id).execute()
@@ -176,6 +181,15 @@ class SupabaseGeneratedDocumentRepository(GeneratedDocumentRepository):
         c = get_supabase()
         r = c.table("generated_documents").select("*").eq("id", document_id).execute()
         return _first(r.data)
+
+    def list_by_case(self, case_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("generated_documents").select("*").eq("case_id", case_id).execute()
+        return r.data or []
+
+    def delete(self, document_id: str) -> None:
+        c = get_supabase()
+        c.table("generated_documents").delete().eq("id", document_id).execute()
 
 
 class SupabaseTemplateRepository(TemplateRepository):
@@ -276,6 +290,10 @@ class SupabaseMessageRepository(MessageRepository):
             row["display_name"] = users_rel.get("display_name")
             rows.append(row)
         return rows
+
+    def delete_for_case(self, case_id: str) -> None:
+        c = get_supabase()
+        c.table("messages").delete().eq("case_id", case_id).execute()
 
 
 class SupabaseTariffRepository(TariffRepository):

@@ -148,6 +148,11 @@ class SQLiteDocumentRepository(DocumentRepository):
             rows = c.execute("SELECT * FROM documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def list_by_case(self, case_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM documents WHERE case_id=?", (case_id,)).fetchall()
+        return [dict(r) for r in rows]
+
     def delete(self, document_id: str) -> None:
         with connect() as c:
             c.execute("DELETE FROM documents WHERE id=?", (document_id,))
@@ -176,6 +181,15 @@ class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
         with connect() as c:
             rows = c.execute("SELECT * FROM generated_documents WHERE owner_id=? ORDER BY created_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def list_by_case(self, case_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM generated_documents WHERE case_id=?", (case_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete(self, document_id: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM generated_documents WHERE id=?", (document_id,))
 
     def get(self, document_id: str) -> Optional[dict]:
         with connect() as c:
@@ -266,6 +280,10 @@ class SQLiteMessageRepository(MessageRepository):
             rows = c.execute("""SELECT m.*,u.display_name FROM messages m JOIN users u ON u.id=m.sender_id
                 WHERE m.case_id=? ORDER BY m.created_at ASC""", (case_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def delete_for_case(self, case_id: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM messages WHERE case_id=?", (case_id,))
 
 
 class SQLitePlanRepository(PlanRepository):
