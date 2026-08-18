@@ -2,7 +2,7 @@
 from html import escape
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
-from app.auth.service import get_user_by_session
+from app.auth.service import require_active_user
 from app.documents.engine import form_state
 from app.feepusula.service import build_harcama_pusulasi
 from app.files.service import save_generated
@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.post("/build")
 async def build_pusula(request: Request):
-    u = get_user_by_session(request.cookies.get("session"))
+    u = require_active_user(request.cookies.get("session"))
     if not u: return RedirectResponse("/auth/login", 303)
     form = await request.form()
     values, respondents, _, _ = form_state(form)
