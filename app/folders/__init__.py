@@ -1,1 +1,1 @@
-"""Dosya klasör sistemi."""
+"""Case folder management module."""

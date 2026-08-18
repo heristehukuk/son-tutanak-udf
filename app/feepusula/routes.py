@@ -20,7 +20,7 @@ async def build_pusula(request: Request):
         xlsx_bytes, uyari = build_harcama_pusulasi(
             daire=values.get("daireBilgisi", ""),
             dosya_turu_text=values.get("dosyaTuru") or values.get("uyusmazlik") or "",
-            basvuru_no=values.get("basvuruNo", ""),
+            dosya_no=values.get("dosyaNo", ""),
             taraf_sayisi=taraf_sayisi,
             arabulucu_adi=values.get("arabulucuAdi", ""),
             arabulucu_tc=values.get("arabulucuTc", ""),

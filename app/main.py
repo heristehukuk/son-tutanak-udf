@@ -32,6 +32,7 @@ from app.web import page
 from app.supabase_client import supabase_health
 from app.modules.calendar.router import router as calendar_router
 from app.modules.tasks.router import router as tasks_router
+from app.folders.routes import router as folders_router
 app=FastAPI(title="Son Tutanak UDF Asistanı v17")
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
@@ -43,6 +44,7 @@ app.include_router(templates_router,prefix="/templates")
 app.include_router(feepusula_router,prefix="/harcama-pusulasi")
 app.include_router(calendar_router)
 app.include_router(tasks_router)
+app.include_router(folders_router)
 
 @app.on_event("startup")
 async def startup():
@@ -90,8 +92,10 @@ async def home(request:Request):
     if u:
         from app.auth.service import cleanup_expired_pending
         from app.files.trash_service import cleanup_expired_deleted_cases
+        from app.folders.service import cleanup_deleted_folders
         cleanup_expired_pending()
         cleanup_expired_deleted_cases()
+        cleanup_deleted_folders()
         u=current_user(request)  # durumu değişmiş olabilir (pending->rejected)
     if not u:
         return page("Son Tutanak UDF Asistanı",
@@ -160,7 +164,6 @@ async def schedule_case(request:Request):
     from app.modules.tasks.storage import _parse_start
     start=_parse_start(baslangic_raw)
     missing=[]
-    if not dosya_no:missing.append("Dosya No")
     if not basvurucu:missing.append("Başvurucu Adı Soyadı")
     if not dosya_turu:missing.append("Dosya Türü")
     if not start:missing.append("Süreç Başlangıç Tarihi (geçerli bir tarih olmalı)")
@@ -186,7 +189,17 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         values,respondents=merge_state(values,respondents,locked,locked_resp,nv,nr)
         cid=str(form.get("case_id") or "")
-        if cid:save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
+        if cid:
+            save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
+            case=repos.cases.get(cid)
+            if case and case.get("owner_id")==u["id"]:
+                repos.cases.update(cid,{"file_no":values.get("dosyaNo") or case.get("file_no"),"application_no":values.get("basvuruNo") or case.get("application_no"),
+                    "title":values.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
+                    "file_type":values.get("dosyaTuru") or case.get("file_type"),
+                    "start_date":values.get("baslangicTarihi") or case.get("start_date"),
+                    "case_data_json":json.dumps(values,ensure_ascii=False),"updated_at":now().isoformat()})
+                from app.folders.service import update_case_folder_name, ensure_case_folders
+                ensure_case_folders(u["id"], cid); update_case_folder_name(u["id"], cid)
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
                            "Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur.",
                            custom_templates=list_visible_templates(u["id"]))
@@ -258,11 +271,14 @@ async def build(request:Request):
             save_generated(u["id"],cid,result,template_label,doc_kind=doc_kind)
             case=repos.cases.get(cid)
             if case and case["owner_id"]==u["id"]:
-                repos.cases.update(cid,{"file_no":values.get("dosyaNo"),"application_no":values.get("basvuruNo"),
-                                        "title":values.get("basvurucuAdiSoyadi") or "Dosya",
+                repos.cases.update(cid,{"file_no":values.get("dosyaNo") or case.get("file_no"),"application_no":values.get("basvuruNo") or case.get("application_no"),
+                                        "title":values.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
                                         "file_type":values.get("dosyaTuru") or case.get("file_type"),
+                                        "start_date":values.get("baslangicTarihi") or case.get("start_date"),
                                         "case_data_json":json.dumps(values,ensure_ascii=False),
                                         "updated_at":now().isoformat()})
+                from app.folders.service import update_case_folder_name, ensure_case_folders
+                ensure_case_folders(u["id"], cid); update_case_folder_name(u["id"], cid)
         name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+"_hazir.udf"
         ascii_fallback=re.sub(r'[^A-Za-z0-9_.-]','_',name) or "son_tutanak_hazir.udf"
         quoted=urllib.parse.quote(name)

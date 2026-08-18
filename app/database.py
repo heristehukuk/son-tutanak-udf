@@ -47,14 +47,30 @@ def init_db():
             deleted_at TEXT, deleted_by TEXT, deleted_from_status TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS folders (
+            id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE CASCADE,
+            owner_id TEXT REFERENCES users(id) ON DELETE SET NULL, parent_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
+            name TEXT NOT NULL, folder_type TEXT NOT NULL DEFAULT 'custom', code TEXT, sort_order INTEGER NOT NULL DEFAULT 1000,
+            is_system INTEGER NOT NULL DEFAULT 0, is_global INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active',
+            deleted_at TEXT, deleted_by TEXT, restored_at TEXT, restored_by TEXT, restored_parent_id TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS folder_permissions (
+            id TEXT PRIMARY KEY, folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, granted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+            granted_at TEXT NOT NULL, UNIQUE(folder_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_folders_case ON folders(case_id, status);
+        CREATE INDEX IF NOT EXISTS idx_folders_owner ON folders(owner_id, status);
+        CREATE INDEX IF NOT EXISTS idx_folder_permissions_user ON folder_permissions(user_id);
         CREATE TABLE IF NOT EXISTS documents (
-            id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL,
+            id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL, folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
             owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             original_name TEXT NOT NULL, stored_path TEXT NOT NULL, kind TEXT NOT NULL,
             size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS generated_documents (
-            id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL,
+            id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id) ON DELETE SET NULL, folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
             owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             original_template TEXT NOT NULL, stored_path TEXT NOT NULL, doc_kind TEXT, created_at TEXT NOT NULL
         );
@@ -162,3 +178,11 @@ def init_db():
         case_cols2 = [r["name"] for r in c.execute("PRAGMA table_info(cases)").fetchall()]
         if "registry_no" not in case_cols2:
             c.execute("ALTER TABLE cases ADD COLUMN registry_no TEXT UNIQUE")
+        doc_cols = [r["name"] for r in c.execute("PRAGMA table_info(documents)").fetchall()]
+        if "folder_id" not in doc_cols:
+            c.execute("ALTER TABLE documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
+        gd_cols2 = [r["name"] for r in c.execute("PRAGMA table_info(generated_documents)").fetchall()]
+        if "folder_id" not in gd_cols2:
+            c.execute("ALTER TABLE generated_documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_documents_folder ON generated_documents(folder_id)")

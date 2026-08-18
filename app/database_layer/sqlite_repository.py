@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, CounterRepository,
+    TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository,
 )
 
 
@@ -132,9 +132,9 @@ class SQLiteDocumentRepository(DocumentRepository):
         did = document.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO documents
-                (id,case_id,owner_id,original_name,stored_path,kind,size_bytes,created_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
-                (did, document.get("case_id"), document["owner_id"], document["original_name"],
+                (id,case_id,folder_id,owner_id,original_name,stored_path,kind,size_bytes,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (did, document.get("case_id"), document.get("folder_id"), document["owner_id"], document["original_name"],
                  document["stored_path"], document["kind"], document["size_bytes"], document["created_at"]))
         return self.get(did)
 
@@ -169,8 +169,8 @@ class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
         did = document.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO generated_documents
-                (id,case_id,owner_id,original_template,stored_path,doc_kind,created_at)
-                VALUES(?,?,?,?,?,?,?)""",
+                (id,case_id,folder_id,owner_id,original_template,stored_path,doc_kind,created_at)
+                VALUES(?,?,?,?,?,?,?,?)""",
                 (did, document.get("case_id"), document["owner_id"], document["original_template"],
                  document["stored_path"], document.get("doc_kind"), document["created_at"]))
         with connect() as c:
@@ -486,6 +486,102 @@ class SQLiteTaskHistoryRepository(TaskHistoryRepository):
             rows = c.execute("SELECT * FROM task_history WHERE task_id=? ORDER BY created_at ASC", (task_id,)).fetchall()
         return [dict(r) for r in rows]
 
+
+
+class SQLiteFolderRepository(FolderRepository):
+    def create(self, folder: dict) -> dict:
+        folder = dict(folder)
+        folder.setdefault("id", str(uuid4()))
+        cols = ",".join(folder.keys())
+        placeholders = ",".join("?" for _ in folder)
+        with connect() as c:
+            c.execute(f"INSERT INTO folders ({cols}) VALUES ({placeholders})", tuple(folder.values()))
+        return self.get(folder["id"])
+
+    def get(self, folder_id: str):
+        with connect() as c: row=c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone()
+        return _row_to_dict(row)
+
+    def update(self, folder_id: str, values: dict):
+        if not values: return self.get(folder_id)
+        cols=",".join(f"{k}=?" for k in values)
+        with connect() as c: c.execute(f"UPDATE folders SET {cols} WHERE id=?",(*values.values(),folder_id))
+        return self.get(folder_id)
+
+    def list_for_case(self, case_id: str):
+        with connect() as c: rows=c.execute("SELECT * FROM folders WHERE case_id=? ORDER BY sort_order,name",(case_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_by_case(self, owner_id: str, case_id: str):
+        with connect() as c: rows=c.execute("SELECT * FROM folders WHERE owner_id=? AND case_id=? ORDER BY sort_order,name",(owner_id,case_id)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_case_root(self, case_id: str):
+        with connect() as c: row=c.execute("SELECT * FROM folders WHERE case_id=? AND folder_type='root' AND status='active' ORDER BY created_at LIMIT 1",(case_id,)).fetchone()
+        return _row_to_dict(row)
+
+    def get_by_code(self, case_id: str, code: str, active_only=True):
+        extra=" AND status='active'" if active_only else ""
+        with connect() as c: row=c.execute(f"SELECT * FROM folders WHERE case_id=? AND code=?{extra} ORDER BY created_at LIMIT 1",(case_id,code)).fetchone()
+        return _row_to_dict(row)
+
+    def list_visible_to_user(self, user_id: str, case_id=None):
+        q=("SELECT DISTINCT f.* FROM folders f LEFT JOIN folder_permissions fp "
+           "ON fp.folder_id=f.id AND fp.user_id=? "
+           "WHERE f.status IN ('active','restored') AND (f.owner_id=? OR f.is_global=1 OR fp.user_id IS NOT NULL)")
+        params=[user_id,user_id]
+        if case_id: q += " AND f.case_id=?"; params.append(case_id)
+        q += " ORDER BY f.sort_order,f.name"
+        with connect() as c: rows=c.execute(q,params).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_general(self):
+        with connect() as c: rows=c.execute("SELECT * FROM folders WHERE is_global=1 ORDER BY sort_order,name").fetchall()
+        return [dict(r) for r in rows]
+
+    def list_all_active_or_deleted(self):
+        with connect() as c: rows=c.execute("SELECT * FROM folders ORDER BY status,sort_order,name").fetchall()
+        return [dict(r) for r in rows]
+
+    def list_deleted_before(self, cutoff: str):
+        with connect() as c: rows=c.execute("SELECT * FROM folders WHERE status='deleted' AND deleted_at IS NOT NULL AND deleted_at < ?",(cutoff,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def soft_delete(self, folder_id: str, user_id: str):
+        from app.auth.service import now
+        stamp=now().isoformat()
+        with connect() as c:
+            c.execute("UPDATE folders SET status='deleted',deleted_at=?,deleted_by=?,updated_at=? WHERE id=?",(stamp,user_id,stamp,folder_id))
+            c.execute("UPDATE folders SET status='deleted',deleted_at=?,deleted_by=?,updated_at=? WHERE parent_id=? AND status<>'deleted'",(stamp,user_id,stamp,folder_id))
+        return self.get(folder_id)
+
+    def restore(self, folder_id: str, admin_id: str, restored_parent_id: str):
+        from app.auth.service import now
+        stamp=now().isoformat()
+        with connect() as c: c.execute("UPDATE folders SET status='restored',restored_at=?,restored_by=?,restored_parent_id=?,parent_id=?,updated_at=? WHERE id=?",(stamp,admin_id,restored_parent_id,restored_parent_id,stamp,folder_id))
+        return self.get(folder_id)
+
+    def purge(self, folder_id: str):
+        with connect() as c:
+            ids=[folder_id]; i=0
+            while i<len(ids):
+                ids += [r['id'] for r in c.execute("SELECT id FROM folders WHERE parent_id=?",(ids[i],)).fetchall()]; i+=1
+            for fid in reversed(ids):
+                c.execute("UPDATE documents SET folder_id=NULL WHERE folder_id=?",(fid,))
+                c.execute("UPDATE generated_documents SET folder_id=NULL WHERE folder_id=?",(fid,))
+                c.execute("DELETE FROM folder_permissions WHERE folder_id=?",(fid,))
+                c.execute("DELETE FROM folders WHERE id=?",(fid,))
+
+    def grant(self, folder_id: str, user_id: str, granted_by: str):
+        from app.auth.service import now
+        with connect() as c: c.execute("INSERT OR IGNORE INTO folder_permissions(id,folder_id,user_id,granted_by,granted_at) VALUES(?,?,?,?,?)",(str(uuid4()),folder_id,user_id,granted_by,now().isoformat()))
+
+    def revoke(self, folder_id: str, user_id: str):
+        with connect() as c: c.execute("DELETE FROM folder_permissions WHERE folder_id=? AND user_id=?",(folder_id,user_id))
+
+    def has_permission(self, folder_id: str, user_id: str):
+        with connect() as c: row=c.execute("SELECT 1 FROM folder_permissions WHERE folder_id=? AND user_id=? LIMIT 1",(folder_id,user_id)).fetchone()
+        return row is not None
 
 class SQLitePermissionRepository(PermissionRepository):
     def grant(self, user_id: str, permission: str, granted_by: Optional[str]) -> dict:

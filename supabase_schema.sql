@@ -75,9 +75,55 @@ CREATE TABLE IF NOT EXISTS cases (
     updated_at       TEXT NOT NULL
 );
 
+-- ---------------------------------------------------------------------
+-- Klasör sistemi
+-- Her case kendi kök + 7 standart klasörüne sahiptir.
+-- Genel klasörler case_id NULL + is_global=1 ile tutulabilir.
+-- Silme kalıcı değildir: status=deleted, 15 gün sonra purge edilir.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS folders (
+    id                 TEXT PRIMARY KEY,
+    case_id            TEXT REFERENCES cases(id) ON DELETE CASCADE,
+    owner_id           TEXT REFERENCES users(id) ON DELETE SET NULL,
+    parent_id          TEXT REFERENCES folders(id) ON DELETE SET NULL,
+    name               TEXT NOT NULL,
+    folder_type        TEXT NOT NULL DEFAULT 'custom',
+    code               TEXT,
+    sort_order         INTEGER NOT NULL DEFAULT 1000,
+    is_system          INTEGER NOT NULL DEFAULT 0,
+    is_global          INTEGER NOT NULL DEFAULT 0,
+    status             TEXT NOT NULL DEFAULT 'active',
+    deleted_at         TEXT,
+    deleted_by         TEXT,
+    restored_at        TEXT,
+    restored_by        TEXT,
+    restored_parent_id TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS folder_permissions (
+    id          TEXT PRIMARY KEY,
+    folder_id  TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    granted_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+    granted_at  TEXT NOT NULL,
+    UNIQUE(folder_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_folders_case ON folders(case_id, status);
+CREATE INDEX IF NOT EXISTS idx_folders_owner ON folders(owner_id, status);
+CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id, status);
+CREATE INDEX IF NOT EXISTS idx_folder_permissions_user ON folder_permissions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
+CREATE INDEX IF NOT EXISTS idx_generated_documents_folder ON generated_documents(folder_id);
+
+
 CREATE TABLE IF NOT EXISTS documents (
     id             TEXT PRIMARY KEY,
     case_id        TEXT REFERENCES cases(id) ON DELETE SET NULL,
+    folder_id      TEXT REFERENCES folders(id) ON DELETE SET NULL,
     owner_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     original_name  TEXT NOT NULL,
     stored_path    TEXT NOT NULL,
@@ -89,6 +135,7 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE TABLE IF NOT EXISTS generated_documents (
     id                 TEXT PRIMARY KEY,
     case_id            TEXT REFERENCES cases(id) ON DELETE SET NULL,
+    folder_id          TEXT REFERENCES folders(id) ON DELETE SET NULL,
     owner_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     original_template  TEXT NOT NULL,
     stored_path        TEXT NOT NULL,
@@ -315,6 +362,7 @@ BEGIN
     RETURN new_val;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- =====================================================================
 -- ONEMLI: Bu tablolara sadece backend (SUPABASE_SECRET_KEY / service_role

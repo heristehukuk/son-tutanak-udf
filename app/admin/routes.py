@@ -124,6 +124,8 @@ async def dashboard(request:Request):
     if can["audit.view"]:
         audit_html='<h2>İşlem Geçmişi</h2><p><a href="/admin/audit"><button>Tüm Kayıtları Gör</button></a></p>'
 
+    folder_html='<h2>📁 Klasör Yönetimi</h2><p><a href="/folders/admin"><button>Klasörleri Yönet</button></a></p>' if u.get('is_super_admin') else ''
+
     backup_html='<h2>Tam Yedek</h2><p><a href="/admin/backup"><button>Tüm Sistemi JSON Olarak İndir</button></a></p>' if u.get("is_super_admin") else ""
 
     trash_html=""
@@ -136,7 +138,7 @@ async def dashboard(request:Request):
           (("<h2>Yüklenen Belgeler</h2>"+"".join(ds)) if can["files.view"] else "")+
           "<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
           "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>"+
-          audit_html+trash_html+backup_html)
+          audit_html+trash_html+folder_html+backup_html)
     return page("Admin",body)
 
 

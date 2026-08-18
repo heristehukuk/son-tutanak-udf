@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, CounterRepository,
+    TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository,
 )
 
 
@@ -470,6 +470,70 @@ class SupabaseTaskHistoryRepository(TaskHistoryRepository):
         r = c.table("task_history").select("*").eq("task_id", task_id).order("created_at").execute()
         return r.data or []
 
+
+
+class SupabaseFolderRepository(FolderRepository):
+    def create(self, folder: dict) -> dict:
+        from uuid import uuid4
+        folder=dict(folder); folder.setdefault("id",str(uuid4()))
+        c=get_supabase(); c.table("folders").insert(folder).execute(); return self.get(folder["id"])
+    def get(self, folder_id: str):
+        return _first(get_supabase().table("folders").select("*").eq("id",folder_id).execute().data)
+    def update(self, folder_id: str, values: dict):
+        get_supabase().table("folders").update(values).eq("id",folder_id).execute(); return self.get(folder_id)
+    def list_for_case(self, case_id: str):
+        return get_supabase().table("folders").select("*").eq("case_id",case_id).order("sort_order").order("name").execute().data or []
+    def list_by_case(self, owner_id: str, case_id: str):
+        return get_supabase().table("folders").select("*").eq("owner_id",owner_id).eq("case_id",case_id).order("sort_order").order("name").execute().data or []
+    def get_case_root(self, case_id: str):
+        return _first(get_supabase().table("folders").select("*").eq("case_id",case_id).eq("folder_type","root").eq("status","active").limit(1).execute().data)
+    def get_by_code(self, case_id: str, code: str, active_only=True):
+        q=get_supabase().table("folders").select("*").eq("case_id",case_id).eq("code",code)
+        if active_only:q=q.eq("status","active")
+        return _first(q.limit(1).execute().data)
+    def list_visible_to_user(self, user_id: str, case_id=None):
+        c=get_supabase()
+        own=c.table("folders").select("*").eq("owner_id",user_id).in_("status",["active","restored"]).execute().data or []
+        gen=c.table("folders").select("*").eq("is_global",1).eq("status","active").execute().data or []
+        p=c.table("folder_permissions").select("folder_id").eq("user_id",user_id).execute().data or []
+        ids=[x["folder_id"] for x in p]
+        permitted=c.table("folders").select("*").in_("id",ids).in_("status",["active","restored"]).execute().data if ids else []
+        merged={x["id"]:x for x in own+gen+(permitted or [])}
+        vals=list(merged.values())
+        if case_id: vals=[x for x in vals if x.get("case_id")==case_id]
+        return sorted(vals,key=lambda x:(x.get("sort_order",1000),x.get("name", "")))
+    def list_general(self):
+        return get_supabase().table("folders").select("*").eq("is_global",1).execute().data or []
+    def list_all_active_or_deleted(self):
+        return get_supabase().table("folders").select("*").order("status").order("sort_order").order("name").execute().data or []
+    def list_deleted_before(self, cutoff: str):
+        return get_supabase().table("folders").select("*").eq("status","deleted").lt("deleted_at",cutoff).execute().data or []
+    def soft_delete(self, folder_id: str, user_id: str):
+        from app.auth.service import now
+        stamp=now().isoformat(); self.update(folder_id,{"status":"deleted","deleted_at":stamp,"deleted_by":user_id,"updated_at":stamp})
+        folder=self.get(folder_id)
+        if folder and folder.get("case_id"):
+            for child in self.list_for_case(folder["case_id"]):
+                if child.get("parent_id")==folder_id and child.get("status")!="deleted": self.update(child["id"],{"status":"deleted","deleted_at":stamp,"deleted_by":user_id,"updated_at":stamp})
+        return self.get(folder_id)
+    def restore(self, folder_id: str, admin_id: str, restored_parent_id: str):
+        from app.auth.service import now
+        stamp=now().isoformat(); return self.update(folder_id,{"status":"restored","restored_at":stamp,"restored_by":admin_id,"restored_parent_id":restored_parent_id,"parent_id":restored_parent_id,"updated_at":stamp})
+    def purge(self, folder_id: str):
+        c=get_supabase(); ids=[folder_id]; i=0
+        while i<len(ids):
+            ids += [r["id"] for r in (c.table("folders").select("id").eq("parent_id",ids[i]).execute().data or [])]; i+=1
+        for fid in reversed(ids):
+            c.table("documents").update({"folder_id":None}).eq("folder_id",fid).execute(); c.table("generated_documents").update({"folder_id":None}).eq("folder_id",fid).execute(); c.table("folder_permissions").delete().eq("folder_id",fid).execute(); c.table("folders").delete().eq("id",fid).execute()
+    def grant(self, folder_id: str, user_id: str, granted_by: str):
+        from uuid import uuid4
+        from app.auth.service import now
+        c=get_supabase(); e=c.table("folder_permissions").select("id").eq("folder_id",folder_id).eq("user_id",user_id).execute().data or []
+        if not e:c.table("folder_permissions").insert({"id":str(uuid4()),"folder_id":folder_id,"user_id":user_id,"granted_by":granted_by,"granted_at":now().isoformat()}).execute()
+    def revoke(self, folder_id: str, user_id: str):
+        get_supabase().table("folder_permissions").delete().eq("folder_id",folder_id).eq("user_id",user_id).execute()
+    def has_permission(self, folder_id: str, user_id: str):
+        return bool(get_supabase().table("folder_permissions").select("id").eq("folder_id",folder_id).eq("user_id",user_id).limit(1).execute().data)
 
 class SupabasePermissionRepository(PermissionRepository):
     def grant(self, user_id: str, permission: str, granted_by: Optional[str]) -> dict:
