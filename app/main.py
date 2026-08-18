@@ -89,7 +89,9 @@ async def home(request:Request):
     u=current_user(request)
     if u:
         from app.auth.service import cleanup_expired_pending
+        from app.files.trash_service import cleanup_expired_deleted_cases
         cleanup_expired_pending()
+        cleanup_expired_deleted_cases()
         u=current_user(request)  # durumu değişmiş olabilir (pending->rejected)
     if not u:
         return page("Son Tutanak UDF Asistanı",
