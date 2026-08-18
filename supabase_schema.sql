@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS users (
     approved_at     TEXT,
     expires_at      TEXT,
     last_ip         TEXT,
-    iban            TEXT
+    iban            TEXT,
+    mediator_no     INTEGER UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS cases (
     start_date       TEXT,
     status           TEXT NOT NULL DEFAULT 'open',
     case_data_json   TEXT,
+    registry_no      TEXT UNIQUE,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );
@@ -152,6 +154,24 @@ CREATE TABLE IF NOT EXISTS user_permissions (
     granted_by   TEXT,
     UNIQUE(user_id, permission)
 );
+
+-- Atomik sayaç tablosu: arabulucu numarası ve dosya kayıt-no sırası için.
+-- next_counter() Postgres fonksiyonu (aşağıda) bu tabloyu yarış durumu
+-- (race condition) OLMADAN artırır.
+CREATE TABLE IF NOT EXISTS counters (
+    id     TEXT PRIMARY KEY,
+    value  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE OR REPLACE FUNCTION next_counter(counter_id text) RETURNS integer AS $$
+DECLARE new_val integer;
+BEGIN
+    INSERT INTO counters(id, value) VALUES (counter_id, 1)
+    ON CONFLICT (id) DO UPDATE SET value = counters.value + 1
+    RETURNING value INTO new_val;
+    RETURN new_val;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS usage (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -275,6 +295,23 @@ ALTER TABLE cases ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS case_data_json TEXT;
 ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS doc_kind TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_no INTEGER UNIQUE;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS registry_no TEXT UNIQUE;
+
+CREATE TABLE IF NOT EXISTS counters (
+    id     TEXT PRIMARY KEY,
+    value  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE OR REPLACE FUNCTION next_counter(counter_id text) RETURNS integer AS $$
+DECLARE new_val integer;
+BEGIN
+    INSERT INTO counters(id, value) VALUES (counter_id, 1)
+    ON CONFLICT (id) DO UPDATE SET value = counters.value + 1
+    RETURNING value INTO new_val;
+    RETURN new_val;
+END;
+$$ LANGUAGE plpgsql;
 
 -- =====================================================================
 -- ONEMLI: Bu tablolara sadece backend (SUPABASE_SECRET_KEY / service_role
@@ -283,22 +320,3 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) 
 -- acmak istersen once her tablo icin policy yazman gerekir, yoksa
 -- backend istekleri 0 satir donmeye baslar.
 -- =====================================================================
-
-
--- Klasor sistemi
-CREATE TABLE IF NOT EXISTS folders (
-    id TEXT PRIMARY KEY,
-    case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    code TEXT,
-    is_system INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
-ALTER TABLE documents ADD COLUMN IF NOT EXISTS folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
-ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_folders_case_owner ON folders(case_id, owner_id);
-CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
-CREATE INDEX IF NOT EXISTS idx_generated_documents_folder ON generated_documents(folder_id);

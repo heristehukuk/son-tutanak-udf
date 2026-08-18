@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, FolderRepository,
+    TaskHistoryRepository, PermissionRepository, CounterRepository,
 )
 
 
@@ -86,11 +86,11 @@ class SQLiteCaseRepository(CaseRepository):
         cid = case.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO cases
-                (id,owner_id,file_no,application_no,title,file_type,start_date,status,case_data_json,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (id,owner_id,file_no,application_no,title,file_type,start_date,status,case_data_json,registry_no,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (cid, case["owner_id"], case.get("file_no"), case.get("application_no"),
                  case.get("title"), case.get("file_type"), case.get("start_date"),
-                 case.get("status", "open"), case.get("case_data_json"),
+                 case.get("status", "open"), case.get("case_data_json"), case.get("registry_no"),
                  case["created_at"], case["updated_at"]))
         return self.get(cid)
 
@@ -110,6 +110,21 @@ class SQLiteCaseRepository(CaseRepository):
         with connect() as c:
             rows = c.execute("SELECT * FROM cases WHERE owner_id=? ORDER BY updated_at DESC", (owner_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def get_by_registry_no(self, registry_no: str) -> Optional[dict]:
+        with connect() as c:
+            row = c.execute("SELECT * FROM cases WHERE registry_no=?", (registry_no,)).fetchone()
+        return _row_to_dict(row)
+
+    def list_all_with_owner(self) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("""SELECT cases.*, users.display_name AS owner_name, users.email AS owner_email
+                FROM cases JOIN users ON users.id=cases.owner_id ORDER BY cases.created_at ASC""").fetchall()
+        return [dict(r) for r in rows]
+
+    def delete(self, case_id: str) -> None:
+        with connect() as c:
+            c.execute("DELETE FROM cases WHERE id=?", (case_id,))
 
 
 class SQLiteDocumentRepository(DocumentRepository):
@@ -468,35 +483,12 @@ class SQLitePermissionRepository(PermissionRepository):
         return [r["permission"] for r in rows]
 
 
-class SQLiteFolderRepository(FolderRepository):
-    def create(self, folder):
-        import uuid
-        folder=dict(folder); folder.setdefault("id",str(uuid.uuid4()))
+class SQLiteCounterRepository(CounterRepository):
+    def next_value(self, counter_id: str) -> int:
         with connect() as c:
-            cols=", ".join(folder.keys()); vals=list(folder.values()); qs=", ".join(["?"]*len(vals))
-            c.execute(f"INSERT INTO folders ({cols}) VALUES ({qs})", vals)
-        return self.get(folder["id"])
-    def get(self, folder_id):
-        with connect() as c:
-            r=c.execute("SELECT * FROM folders WHERE id=?",(folder_id,)).fetchone()
-            return dict(r) if r else None
-    def list_for_case(self, case_id, owner_id):
-        with connect() as c:
-            rows=c.execute("SELECT * FROM folders WHERE case_id=? AND owner_id=? ORDER BY sort_order,name",(case_id,owner_id)).fetchall()
-            return [dict(r) for r in rows]
-    def create_standard(self, case_id, owner_id):
-        from app.auth.service import now
-        names=[("01","Başvuru ve Kaynak Belgeler"),("02","Davetler"),("03","Görüşme Belgeleri"),("04","Son Tutanaklar"),("05","Ücret Pusulaları"),("06","Üst Yazılar"),("07","Diğer Belgeler")]
-        out=[]
-        for code,name in names:
-            with connect() as c:
-                r=c.execute("SELECT * FROM folders WHERE case_id=? AND owner_id=? AND code=?",(case_id,owner_id,code)).fetchone()
-            if r: out.append(dict(r)); continue
-            out.append(self.create({"id":str(__import__('uuid').uuid4()),"case_id":case_id,"owner_id":owner_id,"parent_id":None,"name":name,"code":code,"is_system":1,"sort_order":int(code),"created_at":now().isoformat()}))
-        return out
-    def delete(self, folder_id, owner_id):
-        with connect() as c:
-            r=c.execute("SELECT is_system FROM folders WHERE id=? AND owner_id=?",(folder_id,owner_id)).fetchone()
-            if not r: return
-            if r[0]: raise ValueError("Sistem klasörü silinemez.")
-            c.execute("DELETE FROM folders WHERE id=? AND owner_id=?",(folder_id,owner_id))
+            row = c.execute(
+                "INSERT INTO counters(id,value) VALUES(?,1) "
+                "ON CONFLICT(id) DO UPDATE SET value=value+1 RETURNING value",
+                (counter_id,),
+            ).fetchone()
+        return int(row["value"])

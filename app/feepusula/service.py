@@ -59,7 +59,7 @@ def turkce_para_yazi(amount):
         result += f" {_tr_title(turkce_sayi_yazi(kurus))} Kuruş"
     return result
 
-def build_harcama_pusulasi(*, daire, dosya_turu_text, basvuru_no, taraf_sayisi, arabulucu_adi, arabulucu_tc, arabulucu_iban, year=None):
+def build_harcama_pusulasi(*, daire, dosya_turu_text, dosya_no, taraf_sayisi, arabulucu_adi, arabulucu_tc, arabulucu_iban, year=None):
     """Harcama Pusulası xlsx'ini şablon üzerinden doldurup bytes olarak döner.
     Dönüş: (xlsx_bytes, uyari) -- uyari, tarife bulunamadıysa açıklayıcı bir mesajdır (None ise sorun yok)."""
     category = detect_category(dosya_turu_text)
@@ -80,10 +80,9 @@ def build_harcama_pusulasi(*, daire, dosya_turu_text, basvuru_no, taraf_sayisi, 
     ws["E7"] = unit_price
     ws["E8"] = unit_price
     ws["A9"] = turkce_para_yazi(unit_price)
-    ws["B10"] = f"Ankara Arabuluculuk Bürosunun {basvuru_no or ''} numaralı dosyasına istinaden arabuluculuk ücreti"
+    ws["B10"] = f"Ankara Arabuluculuk Bürosunun {dosya_no or ''} numaralı dosyasına istinaden arabuluculuk ücreti"
     ws["D16"] = arabulucu_tc or ""
     ws["D17"] = f"Arabulucu {arabulucu_adi or ''}".strip()
-    ws["A18"] = "İban"
     ws["C18"] = ":"
     ws["D18"] = arabulucu_iban or ""
     ws["D18"].number_format = "@"

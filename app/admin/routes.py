@@ -80,9 +80,20 @@ async def dashboard(request:Request):
         us.append(
             f'<div class="card"><b>{escape(r["display_name"])}</b> — {escape(r["email"])}'
             f'<p>Durum: {STATUS_LABELS.get(r["status"],r["status"])} | Plan: {plan_options.get(r["plan_id"],r["plan_id"])} | IP: {r["last_ip"] or "-"}'
+            f' | Arabulucu No: {r.get("mediator_no") or "—"} | Sistem ID: <code class="hint">{r["id"]}</code>'
             f'{" | 👑 Süper Admin" if r.get("is_super_admin") else ""}</p>'
             f'<div class="actions">{status_form}{plan_form}</div>{perm_form}<p class="links">{message_link} {delete_form}</p></div>'
         )
+    cs=[]
+    if can["files.view"]:
+        for r in repos.cases.list_all_with_owner():
+            cs.append(
+                f'<div class="card"><b>{escape(r.get("title") or "Dosya")}</b> — {escape(r.get("owner_name"))} ({escape(r.get("owner_email"))})'
+                f'<p>Dosya No: {escape(r.get("file_no") or "-")} | Durum: {escape(r.get("status") or "-")} | Sistem ID: <code class="hint">{r["id"]}</code></p>'
+                f'<form method="post" action="/admin/cases/{r["id"]}/registry-no">'
+                f'<label>Kayıt No</label><input name="registry_no" value="{escape(r.get("registry_no") or "")}" placeholder="ör. 212-2026-001">'
+                f'<button>Kaydet</button></form></div>'
+            )
     ds=[]
     if can["files.view"]:
         docs=repos.documents.list_all_with_owner_email()
@@ -105,6 +116,7 @@ async def dashboard(request:Request):
     backup_html='<h2>Tam Yedek</h2><p><a href="/admin/backup"><button>Tüm Sistemi JSON Olarak İndir</button></a></p>' if u.get("is_super_admin") else ""
 
     body=(STYLE+"<h1>Yönetim</h1><h2>Üyeler</h2>"+"".join(us)+
+          (("<h2>Dosyalar (Kayıt No)</h2>"+"".join(cs)) if can["files.view"] else "")+
           (("<h2>Yüklenen Belgeler</h2>"+"".join(ds)) if can["files.view"] else "")+
           "<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
           "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>"+
@@ -218,6 +230,18 @@ async def download_template(request:Request,template_id:str):
     if not r:return HTMLResponse("Şablon bulunamadı.",404)
     return FileResponse(r["stored_path"],filename=r["name"]+".udf")
 
+@router.post("/cases/{case_id}/registry-no")
+async def set_registry_no(request:Request,case_id:str,registry_no:str=Form(...)):
+    u=staff(request)
+    if not u or not require_permission(u,"files.view"):return HTMLResponse("Yetkisiz.",403)
+    from app.registry import set_registry_no_manual
+    try:
+        set_registry_no_manual(case_id,registry_no)
+    except ValueError as e:
+        return HTMLResponse(f"Hata: {escape(str(e))} <a href=\"/admin/\">← Geri dön</a>",400)
+    log(u["id"],"registry_no_change",case_id,registry_no)
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
+
 @router.post("/users/{user_id}/status")
 async def status(request:Request,user_id:str,status:str=Form(...)):
     u=staff(request)
@@ -226,6 +250,9 @@ async def status(request:Request,user_id:str,status:str=Form(...)):
     target=repos.users.get(user_id)
     old_status=target.get("status") if target else None
     repos.users.update(user_id,{"status":status,"approved_at":now().isoformat() if status=="active" else None})
+    if status=="active":
+        from app.registry import ensure_mediator_no
+        ensure_mediator_no(user_id)
     log(u["id"],"status_change",user_id,f"{old_status} -> {status}")
     return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
 

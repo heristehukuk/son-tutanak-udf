@@ -22,12 +22,12 @@ async def files(request:Request):
             for c in checklist)
         rows.append(f'''<div class="card">
             <h3>{r["title"] or "Dosya"} <span class="status">{STATUS_LABELS.get(r.get("status"),r.get("status") or "")}</span></h3>
+            <p>Kayıt No: <b>{r.get("registry_no") or "—"}</b></p>
             <p>Sistem ID: {r["id"]}</p><p>Dosya No: {r["file_no"] or "-"}</p>
             <p>Başvuru No: {r["application_no"] or "-"}</p>
             <p>Dosya Türü: {r.get("file_type") or "-"}</p>
             <div class="checklist">{check_html}</div>
             <p class="links">
-                <a href="/folders?case_id={r["id"]}">📁 Klasörler</a> ·
                 <a href="/tasks/?case_id={r["id"]}">📋 Görevler</a> ·
                 <a href="/calendar">📅 Takvim</a> ·
                 <a href="/messages/?case_id={r["id"]}">💬 Dosya Mesajları</a>

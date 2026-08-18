@@ -32,7 +32,6 @@ from app.web import page
 from app.supabase_client import supabase_health
 from app.modules.calendar.router import router as calendar_router
 from app.modules.tasks.router import router as tasks_router
-from app.modules.folders.router import router as folders_router
 app=FastAPI(title="Son Tutanak UDF Asistanı v17")
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
@@ -44,11 +43,12 @@ app.include_router(templates_router,prefix="/templates")
 app.include_router(feepusula_router,prefix="/harcama-pusulasi")
 app.include_router(calendar_router)
 app.include_router(tasks_router)
-app.include_router(folders_router)
 
 @app.on_event("startup")
 async def startup():
     init_db(); seed_plans(); bootstrap_admin(); seed_known_tariffs()
+    from app.registry import assign_missing_mediator_numbers, assign_missing_registry_numbers
+    assign_missing_mediator_numbers(); assign_missing_registry_numbers()
 
 def ocr_environment():
     try:
@@ -133,7 +133,8 @@ async def edit(request:Request,file:UploadFile=File(...)):
         cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya",values.get("dosyaTuru"))
         save_document(u["id"],data,file.filename or "kaynak",kind,cid)
         html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]))
-        html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
+        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
+                           f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge okunamadı: {e}",400)
@@ -165,7 +166,8 @@ async def schedule_case(request:Request):
         html=render_editor("Bilgi Havuzu",values,respondents,locked,locked_resp,
             "Takvime eklemek için şu alanlar eksik/geçersiz: "+", ".join(missing)+". Doldurup tekrar deneyin.",
             custom_templates=list_visible_templates(u["id"]))
-        html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
+        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
+                           f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
         return HTMLResponse(html,400)
     from app.modules.calendar.service import CalendarService
     result=CalendarService().add_case(u["id"],dosya_no,basvurucu,dosya_turu,start,main_case_id=cid,case_data=values)
@@ -186,7 +188,8 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
                            "Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur.",
                            custom_templates=list_visible_templates(u["id"]))
-        if cid:html=html.replace('<form id="mainform"',f'<input type="hidden" name="case_id" value="{cid}"><form id="mainform"',1)
+        if cid:html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
+                                  f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge bilgi havuzuna eklenemedi: {e}",400)

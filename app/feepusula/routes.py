@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from app.auth.service import get_user_by_session
 from app.documents.engine import form_state
 from app.feepusula.service import build_harcama_pusulasi
+from app.files.service import save_generated
 
 router = APIRouter()
 
@@ -19,7 +20,7 @@ async def build_pusula(request: Request):
         xlsx_bytes, uyari = build_harcama_pusulasi(
             daire=values.get("daireBilgisi", ""),
             dosya_turu_text=values.get("dosyaTuru") or values.get("uyusmazlik") or "",
-            basvuru_no=values.get("basvuruNo", ""),
+            dosya_no=values.get("dosyaNo", ""),
             taraf_sayisi=taraf_sayisi,
             arabulucu_adi=values.get("arabulucuAdi", ""),
             arabulucu_tc=values.get("arabulucuTc", ""),
@@ -27,6 +28,9 @@ async def build_pusula(request: Request):
         )
     except Exception as e:
         return HTMLResponse(f"Harcama Pusulası oluşturulurken hata: {e}", 500)
+    cid = str(form.get("case_id") or "")
+    if cid:
+        save_generated(u["id"], cid, xlsx_bytes, "Harcama Pusulası", doc_kind="ucret_pusulasi", ext=".xlsx")
     import io
     headers = {"Content-Disposition": 'attachment; filename="harcama_pusulasi.xlsx"'}
     if uyari:

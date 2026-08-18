@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, FolderRepository,
+    TaskHistoryRepository, PermissionRepository, CounterRepository,
 )
 
 
@@ -97,6 +97,28 @@ class SupabaseCaseRepository(CaseRepository):
         c = get_supabase()
         r = c.table("cases").select("*").eq("owner_id", owner_id).order("updated_at", desc=True).execute()
         return r.data or []
+
+    def get_by_registry_no(self, registry_no: str) -> Optional[dict]:
+        c = get_supabase()
+        r = c.table("cases").select("*").eq("registry_no", registry_no).execute()
+        return _first(r.data)
+
+    def list_all_with_owner(self) -> list[dict]:
+        c = get_supabase()
+        r = (c.table("cases").select("*, users!cases_owner_id_fkey(display_name,email)")
+             .order("created_at", desc=False).execute())
+        rows = []
+        for row in (r.data or []):
+            row = dict(row)
+            owner = row.pop("users", None) or {}
+            row["owner_name"] = owner.get("display_name")
+            row["owner_email"] = owner.get("email")
+            rows.append(row)
+        return rows
+
+    def delete(self, case_id: str) -> None:
+        c = get_supabase()
+        c.table("cases").delete().eq("id", case_id).execute()
 
 
 class SupabaseDocumentRepository(DocumentRepository):
@@ -450,29 +472,8 @@ class SupabasePermissionRepository(PermissionRepository):
         return [row["permission"] for row in (r.data or [])]
 
 
-class SupabaseFolderRepository(FolderRepository):
-    def create(self, folder):
-        from uuid import uuid4
-        from app.auth.service import now
-        folder=dict(folder); folder.setdefault("id",str(uuid4())); folder.setdefault("created_at",now().isoformat())
-        c=get_supabase(); c.table("folders").insert(folder).execute()
-        return self.get(folder["id"])
-    def get(self, folder_id):
-        c=get_supabase(); r=c.table("folders").select("*").eq("id",folder_id).execute(); return _first(r.data)
-    def list_for_case(self, case_id, owner_id):
-        c=get_supabase(); r=c.table("folders").select("*").eq("case_id",case_id).eq("owner_id",owner_id).order("sort_order").order("name").execute(); return r.data or []
-    def create_standard(self, case_id, owner_id):
-        from app.auth.service import now
-        names=[("01","Başvuru ve Kaynak Belgeler"),("02","Davetler"),("03","Görüşme Belgeleri"),("04","Son Tutanaklar"),("05","Ücret Pusulaları"),("06","Üst Yazılar"),("07","Diğer Belgeler")]
-        c=get_supabase(); out=[]
-        for code,name in names:
-            r=c.table("folders").select("*").eq("case_id",case_id).eq("owner_id",owner_id).eq("code",code).execute()
-            if r.data: out.append(r.data[0]); continue
-            row={"id":str(__import__('uuid').uuid4()),"case_id":case_id,"owner_id":owner_id,"parent_id":None,"name":name,"code":code,"is_system":1,"sort_order":int(code),"created_at":now().isoformat()}
-            c.table("folders").insert(row).execute(); out.append(row)
-        return out
-    def delete(self, folder_id, owner_id):
-        c=get_supabase(); r=c.table("folders").select("is_system").eq("id",folder_id).eq("owner_id",owner_id).execute()
-        if not r.data: return
-        if r.data[0].get("is_system"): raise ValueError("Sistem klasörü silinemez.")
-        c.table("folders").delete().eq("id",folder_id).eq("owner_id",owner_id).execute()
+class SupabaseCounterRepository(CounterRepository):
+    def next_value(self, counter_id: str) -> int:
+        c = get_supabase()
+        r = c.rpc("next_counter", {"counter_id": counter_id}).execute()
+        return int(r.data)

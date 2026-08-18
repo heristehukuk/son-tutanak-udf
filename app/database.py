@@ -28,7 +28,8 @@ def init_db():
             id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL,
             password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
             plan_id TEXT NOT NULL DEFAULT 'free', is_super_admin INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL, approved_at TEXT, expires_at TEXT, last_ip TEXT, iban TEXT
+            created_at TEXT NOT NULL, approved_at TEXT, expires_at TEXT, last_ip TEXT, iban TEXT,
+            mediator_no INTEGER UNIQUE
         );
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -42,6 +43,7 @@ def init_db():
             id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             file_no TEXT, application_no TEXT, title TEXT,
             file_type TEXT, start_date TEXT, status TEXT NOT NULL DEFAULT 'open', case_data_json TEXT,
+            registry_no TEXT UNIQUE,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS documents (
@@ -96,12 +98,17 @@ def init_db():
             permission TEXT NOT NULL, granted_at TEXT NOT NULL, granted_by TEXT,
             UNIQUE(user_id, permission)
         );
+        CREATE TABLE IF NOT EXISTS counters (
+            id TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0
+        );
         CREATE INDEX IF NOT EXISTS idx_tasks_owner_case ON tasks(owner_id, case_id);
         CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(owner_id, due_date, status);
         CREATE INDEX IF NOT EXISTS idx_calendar_events_case ON calendar_events(case_id);
         CREATE INDEX IF NOT EXISTS idx_calendar_events_owner_date ON calendar_events(owner_id, event_date);
         CREATE INDEX IF NOT EXISTS idx_messages_case ON messages(case_id);
         CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_users_mediator_no ON users(mediator_no);
+        CREATE INDEX IF NOT EXISTS idx_cases_registry_no ON cases(registry_no);
         CREATE TABLE IF NOT EXISTS surveys (
             id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
         );
@@ -130,13 +137,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT, action TEXT NOT NULL,
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS folders (
-            id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
-            owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
-            name TEXT NOT NULL, code TEXT, is_system INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_folders_case ON folders(case_id, owner_id);
-        
         """)
         # NOT: Uygulama daha önce iban sütunu olmadan kurulmuş olabilir; CREATE TABLE IF NOT EXISTS
         # bu durumda sütunu eklemez. Var olan veritabanlarını bozmadan güvenle tamamlıyoruz.
@@ -148,14 +148,15 @@ def init_db():
                           ("status","TEXT NOT NULL DEFAULT 'open'"),("case_data_json","TEXT")):
             if col not in case_cols:
                 c.execute(f"ALTER TABLE cases ADD COLUMN {col} {ddl}")
-        doc_cols = [r["name"] for r in c.execute("PRAGMA table_info(documents)").fetchall()]
-        if "folder_id" not in doc_cols:
-            c.execute("ALTER TABLE documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
         gd_cols = [r["name"] for r in c.execute("PRAGMA table_info(generated_documents)").fetchall()]
         if "doc_kind" not in gd_cols:
             c.execute("ALTER TABLE generated_documents ADD COLUMN doc_kind TEXT")
-        if "folder_id" not in gd_cols:
-            c.execute("ALTER TABLE generated_documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
         msg_cols = [r["name"] for r in c.execute("PRAGMA table_info(messages)").fetchall()]
         if "case_id" not in msg_cols:
             c.execute("ALTER TABLE messages ADD COLUMN case_id TEXT REFERENCES cases(id) ON DELETE SET NULL")
+        user_cols2 = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+        if "mediator_no" not in user_cols2:
+            c.execute("ALTER TABLE users ADD COLUMN mediator_no INTEGER UNIQUE")
+        case_cols2 = [r["name"] for r in c.execute("PRAGMA table_info(cases)").fetchall()]
+        if "registry_no" not in case_cols2:
+            c.execute("ALTER TABLE cases ADD COLUMN registry_no TEXT UNIQUE")

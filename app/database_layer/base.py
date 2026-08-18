@@ -60,6 +60,26 @@ class CaseRepository(ABC):
     @abstractmethod
     def list_by_owner(self, owner_id: str) -> list[dict]: ...
 
+    @abstractmethod
+    def get_by_registry_no(self, registry_no: str) -> Optional[dict]: ...
+
+    @abstractmethod
+    def list_all_with_owner(self) -> list[dict]:
+        """Admin paneli için: her dosyayı sahibinin adı/e-postasıyla birlikte döner."""
+        ...
+
+    @abstractmethod
+    def delete(self, case_id: str) -> None: ...
+
+
+class CounterRepository(ABC):
+    @abstractmethod
+    def next_value(self, counter_id: str) -> int:
+        """Verilen anahtar için bir sonraki sırayı ATOMİK olarak döner (yarış
+        durumuna karşı güvenli - iki dosya aynı anda oluşsa bile aynı numarayı
+        alamaz)."""
+        ...
+
 
 class DocumentRepository(ABC):
     @abstractmethod
@@ -188,19 +208,6 @@ class PermissionRepository(ABC):
 
     @abstractmethod
     def list_for_user(self, user_id: str) -> list[str]: ...
-
-
-class FolderRepository(ABC):
-    @abstractmethod
-    def create(self, folder: dict) -> dict: ...
-    @abstractmethod
-    def get(self, folder_id: str) -> Optional[dict]: ...
-    @abstractmethod
-    def list_for_case(self, case_id: str, owner_id: str) -> list[dict]: ...
-    @abstractmethod
-    def create_standard(self, case_id: str, owner_id: str) -> list[dict]: ...
-    @abstractmethod
-    def delete(self, folder_id: str, owner_id: str) -> None: ...
 
 
 class PlanRepository(ABC):
