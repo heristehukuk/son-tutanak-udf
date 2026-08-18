@@ -1,11 +1,12 @@
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from app.auth.service import get_user_by_session
 from app.database_layer import repos
 from app.web import page
 from app.modules.tasks.storage import document_checklist
 from app.storage import storage
+from app.files.trash_service import soft_delete_case
 router=APIRouter()
 
 STATUS_LABELS={"open":"🟡 Açık","completed":"🟢 Tamamlandı"}
@@ -14,7 +15,7 @@ STATUS_LABELS={"open":"🟡 Açık","completed":"🟢 Tamamlandı"}
 async def files(request:Request):
     u=get_user_by_session(request.cookies.get("session"))
     if not u:return HTMLResponse("Giriş yapmalısınız.",401)
-    cases=repos.cases.list_by_owner(u["id"])
+    cases=[c for c in repos.cases.list_by_owner(u["id"]) if c.get("status")!="deleted"]
     rows=[]
     for r in cases:
         checklist=document_checklist(u["id"],r["id"])
@@ -35,12 +36,27 @@ async def files(request:Request):
             <p class="links">
                 <a href="/tasks/?case_id={r["id"]}">📋 Görevler</a> ·
                 <a href="/calendar">📅 Takvim</a> ·
-                <a href="/messages/?case_id={r["id"]}">💬 Dosya Mesajları</a>
+                <a href="/messages/?case_id={r["id"]}">💬 Dosya Mesajları</a> ·
+                <form method="post" action="/files/{r["id"]}/delete" style="display:inline"
+                      onsubmit="return confirm('Bu dosyayı silmek istediğinize emin misiniz? Listenizden kalıcı olarak kaybolacak.')">
+                    <button type="submit" class="danger-link">🗑️ Sil</button>
+                </form>
             </p></div>''')
     style='''<style>.status{font-size:13px;font-weight:normal}.checklist{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
     .chk{font-size:12px;padding:4px 8px;border-radius:999px;background:#f1f4f7;color:#66717c;text-decoration:none}
-    .chk.on{background:#dcfce7;color:#166534}.links a{margin-right:4px}</style>'''
+    .chk.on{background:#dcfce7;color:#166534}.links a{margin-right:4px}
+    .danger-link{border:none;background:none;color:#b91c1c;text-decoration:underline;cursor:pointer;font-size:14px;padding:0;font-family:inherit}</style>'''
     return page("Dosyalar", style+"<h1>Dosyalarım</h1>"+("".join(rows) or "<p>Henüz dosyanız yok.</p>"))
+
+@router.post("/{case_id}/delete")
+async def delete_case(request:Request,case_id:str):
+    u=get_user_by_session(request.cookies.get("session"))
+    if not u:return HTMLResponse("Giriş yapmalısınız.",401)
+    try:
+        soft_delete_case(case_id,u["id"],is_admin=bool(u.get("is_super_admin")))
+    except ValueError as e:
+        return HTMLResponse(str(e),403)
+    return RedirectResponse("/files/",status_code=303)
 
 @router.get("/document/{doc_id}")
 async def download_generated(request:Request,doc_id:str):
