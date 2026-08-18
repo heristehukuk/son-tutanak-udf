@@ -1,15 +1,14 @@
-
 from html import escape
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from app.auth.service import get_user_by_session
+from app.auth.service import require_active_user
 from app.web import page
 from app.customtemplates.service import create_template, list_visible_templates, delete_template
 
 router = APIRouter()
 
 def _current_user(request: Request):
-    return get_user_by_session(request.cookies.get("session"))
+    return require_active_user(request.cookies.get("session"))
 
 def _template_card(t, user):
     owner_badge = "Sizin" if t["owner_id"] == user["id"] else ("Paylaşılan" if t["is_shared"] else "")
