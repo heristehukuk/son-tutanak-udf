@@ -5,6 +5,9 @@ from datetime import datetime
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, Response, RedirectResponse, JSONResponse
 from app.auth.service import get_user_by_session, now, cleanup_expired_pending
+from app.files.trash_service import (
+    cleanup_expired_deleted_cases, soft_delete_case, restore_case, list_trash,
+)
 from app.storage import storage
 from app.auth.permissions import (
     is_admin, has_permission, require_permission, PERMISSIONS,
@@ -46,6 +49,7 @@ async def dashboard(request:Request):
     u=staff(request)
     if not u:return HTMLResponse("Yetkisiz.",403)
     cleanup_expired_pending()
+    cleanup_expired_deleted_cases()
     can={p:require_permission(u,p) for p in PERMISSIONS}
     users=repos.users.list_all()
     plans=repos.plans.list_all()
@@ -88,12 +92,18 @@ async def dashboard(request:Request):
     cs=[]
     if can["files.view"]:
         for r in repos.cases.list_all_with_owner():
+            if r.get("status")=="deleted":continue
+            del_case_btn=""
+            if can["files.delete"]:
+                del_case_btn=(f'<form method="post" action="/admin/cases/{r["id"]}/delete" style="display:inline" '
+                              f'onsubmit="return confirm(\'Bu dosya silinsin mi? 15 gün içinde çöp kutusundan geri getirilebilir.\')">'
+                              f'<button class="secondary">🗑️ Dosyayı Sil</button></form>')
             cs.append(
                 f'<div class="card"><b>{escape(r.get("title") or "Dosya")}</b> — {escape(r.get("owner_name"))} ({escape(r.get("owner_email"))})'
                 f'<p>Dosya No: {escape(r.get("file_no") or "-")} | Durum: {escape(r.get("status") or "-")} | Sistem ID: <code class="hint">{r["id"]}</code></p>'
                 f'<form method="post" action="/admin/cases/{r["id"]}/registry-no">'
                 f'<label>Kayıt No</label><input name="registry_no" value="{escape(r.get("registry_no") or "")}" placeholder="ör. 212-2026-001">'
-                f'<button>Kaydet</button></form></div>'
+                f'<button>Kaydet</button></form><p class="links">{del_case_btn}</p></div>'
             )
     ds=[]
     if can["files.view"]:
@@ -116,12 +126,17 @@ async def dashboard(request:Request):
 
     backup_html='<h2>Tam Yedek</h2><p><a href="/admin/backup"><button>Tüm Sistemi JSON Olarak İndir</button></a></p>' if u.get("is_super_admin") else ""
 
+    trash_html=""
+    if can["files.delete"]:
+        trash_count=len(list_trash())
+        trash_html=f'<h2>🗑️ Çöp Kutusu ({trash_count})</h2><p><a href="/admin/trash"><button>Silinen Dosyaları Gör</button></a></p>'
+
     body=(STYLE+"<h1>Yönetim</h1><h2>Üyeler</h2>"+"".join(us)+
           (("<h2>Dosyalar (Kayıt No)</h2>"+"".join(cs)) if can["files.view"] else "")+
           (("<h2>Yüklenen Belgeler</h2>"+"".join(ds)) if can["files.view"] else "")+
           "<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
           "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>"+
-          audit_html+backup_html)
+          audit_html+trash_html+backup_html)
     return page("Admin",body)
 
 
@@ -150,6 +165,45 @@ async def audit_log(request:Request):
                     f'<p>{actor_label}{target_label}</p>{f"<p class=\"hint\">{escape(r['details'])}</p>" if r.get("details") else ""}</div>')
     return page("İşlem Geçmişi","<h1>İşlem Geçmişi</h1><p><a href=\"/admin/\">← Yönetime Dön</a></p>"+("".join(items) or "<p>Kayıt yok.</p>"))
 
+
+@router.get("/trash",response_class=HTMLResponse)
+async def trash_page(request:Request):
+    u=staff(request)
+    if not u or not require_permission(u,"files.delete"):return HTMLResponse("Yetkisiz.",403)
+    rows=list_trash()
+    items=[]
+    for r in rows:
+        days=r["days_remaining"]
+        days_label=f"{days} gün kaldı" if days>=0 else "süresi doldu, bir sonraki kontrolde kalıcı silinecek"
+        items.append(
+            f'<div class="card"><b>{escape(r.get("title") or "Dosya")}</b> — {escape(r.get("owner_name"))} ({escape(r.get("owner_email"))})'
+            f'<p>Dosya No: {escape(r.get("file_no") or "-")} | Silme tarihi: {escape(r.get("deleted_at") or "-")} | <b>{days_label}</b></p>'
+            f'<form method="post" action="/admin/cases/{r["id"]}/restore"><button>♻️ Geri Getir</button></form></div>'
+        )
+    body=("<h1>🗑️ Çöp Kutusu</h1><p><a href=\"/admin/\">← Yönetime Dön</a></p>"
+          "<p class=\"hint\">Silinen dosyalar 15 gün boyunca burada durur, süre dolunca bir sonraki panel açılışında kalıcı olarak silinir (belgeler dahil).</p>"
+          +("".join(items) or "<p>Çöp kutusu boş.</p>"))
+    return page("Çöp Kutusu",body)
+
+@router.post("/cases/{case_id}/delete")
+async def admin_delete_case(request:Request,case_id:str):
+    u=staff(request)
+    if not u or not require_permission(u,"files.delete"):return HTMLResponse("Yetkisiz.",403)
+    try:
+        soft_delete_case(case_id,u["id"],is_admin=True)
+    except ValueError as e:
+        return HTMLResponse(f"Hata: {escape(str(e))}",400)
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/">')
+
+@router.post("/cases/{case_id}/restore")
+async def admin_restore_case(request:Request,case_id:str):
+    u=staff(request)
+    if not u or not require_permission(u,"files.delete"):return HTMLResponse("Yetkisiz.",403)
+    try:
+        restore_case(case_id,u["id"])
+    except ValueError as e:
+        return HTMLResponse(f"Hata: {escape(str(e))}",400)
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin/trash">')
 
 @router.get("/backup")
 async def full_backup(request:Request):
