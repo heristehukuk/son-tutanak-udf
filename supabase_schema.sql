@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS cases (
     status           TEXT NOT NULL DEFAULT 'open',
     case_data_json   TEXT,
     registry_no      TEXT UNIQUE,
+    deleted_at       TEXT,
+    deleted_by       TEXT,
+    deleted_from_status TEXT,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );
