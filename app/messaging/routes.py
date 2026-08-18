@@ -1,7 +1,6 @@
-
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from app.auth.service import get_user_by_session, now
+from app.auth.service import require_active_user, now
 from app.auth.permissions import has_permission
 from app.database_layer import repos
 from app.web import page
@@ -57,7 +56,7 @@ STYLE='''<style>
 
 @router.get("/",response_class=HTMLResponse)
 async def inbox(request:Request,case_id:str=""):
-    u=get_user_by_session(request.cookies.get("session"))
+    u=require_active_user(request.cookies.get("session"))
     if not u:return HTMLResponse("Giriş yapmalısınız.",401)
 
     if case_id:
@@ -113,7 +112,7 @@ async def inbox(request:Request,case_id:str=""):
 
 @router.get("/thread/{other_id}",response_class=HTMLResponse)
 async def thread(request:Request,other_id:str):
-    u=get_user_by_session(request.cookies.get("session"))
+    u=require_active_user(request.cookies.get("session"))
     if not u or not can_manage_messages(u):return HTMLResponse("Bu sayfaya erişim yetkiniz yok.",403)
     other=repos.users.get(other_id)
     if not other:return HTMLResponse("Kullanıcı bulunamadı.",404)
@@ -134,7 +133,7 @@ async def thread(request:Request,other_id:str):
 
 @router.post("/")
 async def send(request:Request,recipient_id:str=Form(...),body:str=Form(...),case_id:str=Form("")):
-    u=get_user_by_session(request.cookies.get("session"))
+    u=require_active_user(request.cookies.get("session"))
     if not u:return HTMLResponse("Giriş yapmalısınız.",401)
     if not recipient_id or not body.strip():return HTMLResponse("Alıcı ve mesaj metni zorunludur.",400)
     if case_id:
