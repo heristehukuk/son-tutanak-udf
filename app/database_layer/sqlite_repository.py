@@ -171,8 +171,8 @@ class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
             c.execute("""INSERT INTO generated_documents
                 (id,case_id,folder_id,owner_id,original_template,stored_path,doc_kind,created_at)
                 VALUES(?,?,?,?,?,?,?,?)""",
-                (did, document.get("case_id"), document["owner_id"], document["original_template"],
-                 document["stored_path"], document.get("doc_kind"), document["created_at"]))
+                (did, document.get("case_id"), document.get("folder_id"), document["owner_id"],
+                 document["original_template"], document["stored_path"], document.get("doc_kind"), document["created_at"]))
         with connect() as c:
             row = c.execute("SELECT * FROM generated_documents WHERE id=?", (did,)).fetchone()
         return _row_to_dict(row)
