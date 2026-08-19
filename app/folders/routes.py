@@ -3,7 +3,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from app.auth.service import get_user_by_session
+from app.auth.service import require_active_user
 from app.database_layer import repos
 from app.folders.service import (
     ensure_case_folders, visible_folders, delete_folder as svc_delete_folder,
@@ -14,7 +14,7 @@ from app.folders.service import (
 router = APIRouter(prefix="/folders", tags=["folders"])
 
 def current_user(request):
-    return get_user_by_session(request.cookies.get("session"))
+    return require_active_user(request.cookies.get("session"))
 
 def is_admin(u): return bool(u and u.get("is_super_admin"))
 
