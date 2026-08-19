@@ -89,13 +89,57 @@ def _parse_start(value):
     return None
 
 
+def _resolve_case_start_date(case_id: str, case: dict):
+    """Dosyanın süreç başlangıç tarihini güvenli biçimde bulur.
+
+    Öncelik:
+      1) cases.start_date
+      2) case_data_json içindeki baslangicTarihi/start_date
+      3) eski kayıtlarda normal_deadline takvim olayından geriye doğru hesaplama
+    Bulunan tarih cases.start_date alanına da yazılır ki sonraki görev işlemleri
+    doğrudan aynı alanı kullanabilsin.
+    """
+    start = _parse_start(case.get("start_date"))
+    if start:
+        return start
+
+    raw_json = case.get("case_data_json")
+    if raw_json:
+        try:
+            data = json.loads(raw_json) if isinstance(raw_json, str) else dict(raw_json)
+        except Exception:
+            data = {}
+        for key in ("baslangicTarihi", "start_date", "process_start_date"):
+            start = _parse_start(str(data.get(key) or ""))
+            if start:
+                repos.cases.update(case_id, {"start_date": start.isoformat(), "updated_at": now_iso()})
+                return start
+
+    # Eski kayıtlarda takvim normal süre tarihi mevcut olabilir.
+    try:
+        events = repos.calendar_events.list_for_case(case_id)
+        normal = next((e for e in events if e.get("event_type") == "normal_deadline"), None)
+        if normal and normal.get("event_date"):
+            due = date.fromisoformat(str(normal["event_date"])[:10])
+            file_type = str(case.get("file_type") or "").lower()
+            weeks = 6 if "ticari" in file_type else 3
+            start = due - timedelta(days=weeks * 7)
+            repos.cases.update(case_id, {"start_date": start.isoformat(), "updated_at": now_iso()})
+            return start
+    except Exception:
+        pass
+    return None
+
+
 def create_standard_tasks(owner_id, case_id):
     """6 standart görevi bir kez oluşturur. Mevcut görevler asla tekrarlanmaz."""
     seed_user_templates(owner_id)
     case = get_case(owner_id, case_id)
     if not case:
         return {"created": 0, "reason": "case_not_found"}
-    start = _parse_start(case.get("start_date"))
+    if case.get("status") == "deleted":
+        return {"created": 0, "reason": "case_deleted"}
+    start = _resolve_case_start_date(case_id, case)
     if not start:
         return {"created": 0, "reason": "start_date_missing"}
     existing = {t["task_key"] for t in repos.tasks.list_for_case(case_id) if t.get("is_standard")}

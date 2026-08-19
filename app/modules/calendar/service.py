@@ -52,11 +52,11 @@ def _case_to_calendar_dict(case):
 class CalendarService:
     def add_case(self, owner_id, case_no, applicant_name, file_type, start_date, main_case_id=None, case_data=None):
         case_no = (case_no or "").strip(); applicant_name = (applicant_name or "").strip(); file_type = (file_type or "").strip()
-        if not case_no: raise ValueError("Dosya No boş bırakılamaz.")
+        # Dosya No henüz bilinmiyor olabilir; case yine de takvimlenebilir.
         if not applicant_name: raise ValueError("Başvurucu Adı Soyadı boş bırakılamaz.")
         if not file_type: raise ValueError("Dosya Türü boş bırakılamaz.")
         metadata = dict(case_data or {})
-        metadata.setdefault("dosyaNo", case_no); metadata.setdefault("basvurucuAdiSoyadi", applicant_name)
+        metadata.setdefault("dosyaNo", case_no or ""); metadata.setdefault("basvurucuAdiSoyadi", applicant_name)
         metadata.setdefault("dosyaTuru", file_type); metadata.setdefault("baslangicTarihi", start_date.isoformat())
         application_no = metadata.get("basvuruNo") or None
 
@@ -72,21 +72,22 @@ class CalendarService:
         create_standard_tasks(owner_id, cid)
 
         deadlines = calculate_deadlines(start_date, file_type)
+        display_case_no = case_no or "Dosya No yok"
         # Bu dosya için önceden oluşturulmuş takvim olaylarını (varsa) temizleyip yeniden kur -
         # tarih/tür değiştiyse eski hatırlatıcılar yanlış kalmasın.
         repos.calendar_events.delete_for_case(cid)
         normal_event = repos.calendar_events.create({
             "case_id": cid, "owner_id": owner_id, "event_type": "normal_deadline",
             "event_date": deadlines["normal_due_date"].isoformat(),
-            "title": f"{case_no} – {applicant_name} Normal Süre Sonu",
-            "description": f"Dosya: {case_no}\nBaşvurucu: {applicant_name}\nDosya Türü: {file_type}\nNormal süre: {deadlines['normal_weeks']} hafta",
+            "title": f"{display_case_no} – {applicant_name} Normal Süre Sonu",
+            "description": f"Dosya: {case_no or 'Yok'}\nBaşvurucu: {applicant_name}\nDosya Türü: {file_type}\nNormal süre: {deadlines['normal_weeks']} hafta",
             "created_at": _now_iso(),
         })
         extended_event = repos.calendar_events.create({
             "case_id": cid, "owner_id": owner_id, "event_type": "extended_deadline",
             "event_date": deadlines["extended_due_date"].isoformat(),
-            "title": f"{case_no} – {applicant_name} Ek Süre Sonu",
-            "description": f"Dosya: {case_no}\nBaşvurucu: {applicant_name}\nDosya Türü: {file_type}\nEk süre: {deadlines['extra_weeks']} hafta",
+            "title": f"{display_case_no} – {applicant_name} Ek Süre Sonu",
+            "description": f"Dosya: {case_no or 'Yok'}\nBaşvurucu: {applicant_name}\nDosya Türü: {file_type}\nEk süre: {deadlines['extra_weeks']} hafta",
             "created_at": _now_iso(),
         })
         return {
@@ -106,7 +107,7 @@ class CalendarService:
 
     def list_cases(self, owner_id=None):
         cases = repos.cases.list_by_owner(owner_id) if owner_id else []
-        return [_case_to_calendar_dict(c) for c in cases if c.get("start_date")]
+        return [_case_to_calendar_dict(c) for c in cases if c.get("start_date") and c.get("status") != "deleted"]
 
     def delete_case(self, case_id, owner_id=None):
         """Takvim ekranından 'sil' dendiğinde SADECE bu dosyanın takvim
@@ -118,6 +119,12 @@ class CalendarService:
 
     def get_events(self, start_date=None, end_date=None, owner_id=None):
         events = repos.calendar_events.list_for_owner(owner_id) if owner_id else []
+        active=[]
+        for e in events:
+            case = repos.cases.get(e.get("case_id"))
+            if case and case.get("status") != "deleted":
+                active.append(e)
+        events=active
         if start_date:
             events = [e for e in events if e["event_date"] >= start_date.isoformat()]
         if end_date:
@@ -126,7 +133,11 @@ class CalendarService:
 
     def get_upcoming_warnings(self, warning_days=7, owner_id=None):
         today = date.today(); warnings = []
-        for event in repos.calendar_events.list_for_owner(owner_id) if owner_id else []:
+        events = repos.calendar_events.list_for_owner(owner_id) if owner_id else []
+        for event in events:
+            case = repos.cases.get(event.get("case_id"))
+            if not case or case.get("status") == "deleted":
+                continue
             event_date = date.fromisoformat(event["event_date"])
             remaining = calculate_remaining_days(event_date, today)
             item = dict(event); item["remaining_days"] = remaining

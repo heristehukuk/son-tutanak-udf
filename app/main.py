@@ -176,6 +176,10 @@ async def schedule_case(request:Request):
         return HTMLResponse(html,400)
     from app.modules.calendar.service import CalendarService
     result=CalendarService().add_case(u["id"],dosya_no,basvurucu,dosya_turu,start,main_case_id=cid,case_data=values)
+    task_result = {"created": result.get("tasks_created", 0), "reason": "ok"}
+    if not result.get("tasks_created"):
+        from app.modules.tasks.storage import create_standard_tasks
+        task_result = create_standard_tasks(u["id"], cid)
     return RedirectResponse(f"/tasks/?case_id={cid}",303)
 
 @app.post("/merge",response_class=HTMLResponse)

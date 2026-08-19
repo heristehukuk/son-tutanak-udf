@@ -35,6 +35,7 @@ async def files(request:Request):
             <p class="links">
                 <a href="/tasks/?case_id={r["id"]}">📋 Görevler</a> ·
                 <a href="/calendar">📅 Takvim</a> ·
+                <a href="/folders/case/{r["id"]}">📁 Klasör</a> ·
                 <a href="/messages/?case_id={r["id"]}">💬 Dosya Mesajları</a> ·
                 <form method="post" action="/files/{r["id"]}/delete" style="display:inline"
                       onsubmit="return confirm('Bu dosyayı silmek istediğinize emin misiniz? Listenizden kalıcı olarak kaybolacak.')">

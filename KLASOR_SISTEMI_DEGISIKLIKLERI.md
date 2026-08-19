@@ -30,3 +30,11 @@ Kaynak: son-tutanak-udf-main (4).zip. Önceki ZIP sürümleri kaynak alınmamı�
 - tasks / task history / task templates
 - mevcut Supabase/SQLite repository mimarisi
 - UDF/PDF/JPG/JPEG/PNG/OCR akışı
+
+## 2026-08-19 - 3 Render sorun düzeltmesi
+
+1. **Silinmiş dosyaların takvimde görünmesi:** Takvim olayları artık bağlı `case` kaydı `status=deleted` ise `/calendar/events` ve `/calendar/warnings` sonuçlarından çıkarılıyor. Takvimdeki aktif dosya listesi de silinmiş case'leri göstermiyor.
+2. **Görevler sayfasının boş kalması:** Görev oluşturma, `cases.start_date` boşsa `case_data_json.baslangicTarihi` değerini kullanıyor; eski kayıtlarda gerekiyorsa normal süre takvim olayından başlangıç tarihini geri hesaplayıp case'e kaydediyor. Tarih bulunamazsa görev sayfasında açık bir uyarı gösteriliyor.
+3. **Dosyalarım ekranı:** Her aktif dosya kartına doğrudan `📁 Klasör` bağlantısı eklendi.
+
+Ayrıca takvim oluşturma sırasında Dosya No'nun boş olmasına izin verildi; başvurucu, dosya türü ve geçerli süreç başlangıç tarihi varsa takvim/görev akışı devam eder ve başlıkta `Dosya No yok` kullanılır.
