@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS custom_templates (
     name              TEXT NOT NULL,
     is_shared         INTEGER NOT NULL DEFAULT 0,
     stored_path       TEXT NOT NULL,
+    doc_kind          TEXT DEFAULT 'diger',
     recognized_json   TEXT NOT NULL,
     unrecognized_json TEXT NOT NULL,
     created_at        TEXT NOT NULL

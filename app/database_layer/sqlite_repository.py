@@ -202,10 +202,10 @@ class SQLiteTemplateRepository(TemplateRepository):
         tid = template.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO custom_templates
-                (id,owner_id,name,is_shared,stored_path,recognized_json,unrecognized_json,created_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
+                (id,owner_id,name,is_shared,stored_path,doc_kind,recognized_json,unrecognized_json,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
                 (tid, template["owner_id"], template["name"], int(template.get("is_shared", 0)),
-                 template["stored_path"], template["recognized_json"], template["unrecognized_json"],
+                 template["stored_path"], template.get("doc_kind") or "diger", template["recognized_json"], template["unrecognized_json"],
                  template["created_at"]))
         return self.get(tid)
 

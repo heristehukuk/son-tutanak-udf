@@ -15,7 +15,7 @@ STANDARD_FOLDERS = [
 ]
 DOC_FOLDER_TYPES = {
     "source": "01", "davet_mektubu": "02", "meeting": "03",
-    "son_tutanak": "04", "ucret_pusulasi": "05", "ust_yazi": "06",
+    "son_tutanak": "04", "ucret_pusulasi": "05", "ust_yazi": "06", "ust_yazi_son_tutanak": "06", "ust_yazi_ucret_pusulasi": "06",
 }
 TRASH_DAYS = 15
 
@@ -139,8 +139,6 @@ def can_view_folder(user: dict, folder: dict) -> bool:
 def visible_folders(user: dict, case_id: str | None = None) -> list[dict]:
     if _is_admin(user):
         rows = repos.folders.list_all_active_or_deleted()
-        if case_id:
-            rows = [r for r in rows if r.get("case_id") == case_id]
     else:
         rows = repos.folders.list_visible_to_user(user["id"], case_id=case_id)
     return [r for r in rows if _is_admin(user) or can_view_folder(user, r)]

@@ -46,7 +46,13 @@ async def case_folder(request: Request, case_id: str):
     case=get_case(u,case_id)
     if not case:return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",404)
     ensure_case_folders(case.get("owner_id"),case_id)
-    folders=visible_folders(u,case_id=case_id)
+    # A case folder page is strictly scoped to the selected case.
+    # Do not include global folders, other cases, or deleted folders here.
+    case_folders = repos.folders.list_for_case(case_id)
+    folders = [
+        f for f in case_folders
+        if f.get("status") == "active" and can_view_folder(u, f)
+    ]
     docs=repos.documents.list_by_case(case_id); gens=repos.generated_documents.list_by_case(case_id)
     by={}
     for d in docs: by.setdefault(d.get("folder_id"),[]).append((d.get("original_name") or "Belge","kaynak"))

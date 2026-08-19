@@ -59,3 +59,5 @@ CREATE INDEX IF NOT EXISTS idx_folders_parent_status ON folders(parent_id, statu
 CREATE INDEX IF NOT EXISTS idx_folder_permissions_user ON folder_permissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
 CREATE INDEX IF NOT EXISTS idx_generated_documents_folder ON generated_documents(folder_id);
+
+ALTER TABLE custom_templates ADD COLUMN IF NOT EXISTS doc_kind TEXT DEFAULT 'diger';

@@ -234,6 +234,7 @@ async def build(request:Request):
             row=get_template(choice[len("tpl_"):])
             if not row or not can_use_template(row,u):return HTMLResponse("Bu şablona erişim yetkiniz yok.",403)
             data=get_template_bytes(row);source_name=re.sub(r'\.udf$','',row["name"],flags=re.I) or "son_tutanak"
+            doc_kind=row.get("doc_kind") or "diger"
             is_bracket_template=True
         elif choice=="custom":
             upload=form.get("custom_file")

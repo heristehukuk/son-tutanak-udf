@@ -142,7 +142,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS custom_templates (
             id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL, is_shared INTEGER NOT NULL DEFAULT 0,
-            stored_path TEXT NOT NULL, recognized_json TEXT NOT NULL, unrecognized_json TEXT NOT NULL,
+            stored_path TEXT NOT NULL, doc_kind TEXT DEFAULT 'diger', recognized_json TEXT NOT NULL, unrecognized_json TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS fee_tariffs (
@@ -155,6 +155,9 @@ def init_db():
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
         );
         """)
+        custom_cols = [r["name"] for r in c.execute("PRAGMA table_info(custom_templates)").fetchall()]
+        if "doc_kind" not in custom_cols:
+            c.execute("ALTER TABLE custom_templates ADD COLUMN doc_kind TEXT DEFAULT 'diger'")
         # NOT: Uygulama daha önce iban sütunu olmadan kurulmuş olabilir; CREATE TABLE IF NOT EXISTS
         # bu durumda sütunu eklemez. Var olan veritabanlarını bozmadan güvenle tamamlıyoruz.
         cols = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]

@@ -16,8 +16,16 @@ def _template_card(t, user):
     del_btn = (f'<form action="/templates/{escape(t["id"])}/delete" method="post" '
                f'onsubmit="return confirm(\'Bu şablonu silmek istediğinize emin misiniz?\')">'
                f'<button class="secondary">Sil</button></form>') if can_delete else ""
+    labels={
+        "son_tutanak":"Son Tutanak",
+        "davet_mektubu":"Davet Mektubu",
+        "ust_yazi_son_tutanak":"Üst Yazı – Son Tutanak",
+        "ust_yazi_ucret_pusulasi":"Üst Yazı – Ücret Pusulası",
+        "diger":"Diğer",
+    }
+    kind=labels.get(t.get("doc_kind") or "diger","Diğer")
     return (f'<div class="card"><h3>{escape(t["name"])}</h3>'
-            f'<p class="hint">{escape(owner_badge)}</p>'
+            f'<p class="hint">{escape(owner_badge)} · {escape(kind)}</p>'
             f'<p>{len(t.get("recognized") or [])} tanınan alan · {len(t.get("unrecognized") or [])} tanınmayan ifade</p>'
             f'{del_btn}</div>')
 
@@ -49,6 +57,14 @@ async def new_template_form(request: Request):
     <code>[karşı taraf 1 adı]</code>. Sistem tanıdığı ifadeleri otomatik dolduracak, tanımadıklarını boş bırakacaktır.</p>
     <form action="/templates/new" method="post" enctype="multipart/form-data">
     <label>Şablon Adı</label><input name="name" required>
+    <label>Belge Türü</label>
+    <select name="doc_kind" required>
+      <option value="son_tutanak">Son Tutanak</option>
+      <option value="davet_mektubu">Davet Mektubu</option>
+      <option value="ust_yazi_son_tutanak">Üst Yazı – Son Tutanak</option>
+      <option value="ust_yazi_ucret_pusulasi">Üst Yazı – Ücret Pusulası</option>
+      <option value="diger">Diğer</option>
+    </select>
     <label>UDF Dosyası</label><input type="file" name="file" accept=".udf" required>
     {share_option}
     <button type="submit">Şablonu Kaydet</button>
@@ -56,7 +72,7 @@ async def new_template_form(request: Request):
     return page("Yeni Şablon", body)
 
 @router.post("/new", response_class=HTMLResponse)
-async def upload_template(request: Request, name: str = Form(...), file: UploadFile = File(...), is_shared: str = Form(None)):
+async def upload_template(request: Request, name: str = Form(...), doc_kind: str = Form("diger"), file: UploadFile = File(...), is_shared: str = Form(None)):
     u = _current_user(request)
     if not u: return HTMLResponse("Giriş yapmalısınız.", 401)
     if not (file.filename or "").lower().endswith(".udf"):
@@ -64,7 +80,7 @@ async def upload_template(request: Request, name: str = Form(...), file: UploadF
     data = await file.read()
     shared = bool(is_shared) and bool(u["is_super_admin"])  # sadece admin paylaşımlı şablon oluşturabilir
     try:
-        tid, recognized, unrecognized = create_template(u["id"], name, shared, data)
+        tid, recognized, unrecognized = create_template(u["id"], name, shared, data, doc_kind=doc_kind)
     except Exception as e:
         return HTMLResponse(f"Şablon okunamadı: {e}", 400)
     rec_html = "".join(f"<li>[{escape(r['raw'])}] → {escape(r['target'])}</li>" for r in recognized) or "<li>Hiçbir alan tanınmadı.</li>"

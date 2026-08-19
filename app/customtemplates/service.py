@@ -9,7 +9,7 @@ from app.storage import storage
 
 MAX_NAME_LEN = 120
 
-def create_template(owner_id, name, is_shared, data):
+def create_template(owner_id, name, is_shared, data, doc_kind='diger'):
     """UDF şablonunu tarar (köşeli parantezleri çözer), depoya kaydeder, DB satırı oluşturur.
     Dönüş: (template_id, recognized, unrecognized)"""
     from app.documents.engine import read_udf
@@ -21,7 +21,7 @@ def create_template(owner_id, name, is_shared, data):
     clean_name = (name or "Adsız Şablon").strip()[:MAX_NAME_LEN] or "Adsız Şablon"
     repos.templates.create({
         "id":tid,"owner_id":owner_id,"name":clean_name,"is_shared":1 if is_shared else 0,
-        "stored_path":key,"recognized_json":json.dumps(recognized,ensure_ascii=False),
+        "stored_path":key,"doc_kind":doc_kind or "diger","recognized_json":json.dumps(recognized,ensure_ascii=False),
         "unrecognized_json":json.dumps(unrecognized,ensure_ascii=False),"created_at":now().isoformat(),
     })
     return tid, recognized, unrecognized

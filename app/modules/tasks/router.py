@@ -33,14 +33,22 @@ def task_json(row):
     return d
 
 
+def _safe_json(obj):
+    """json.dumps + <script> içine güvenli gömme. json.dumps varsayılan olarak
+    '/' karakterini kaçışlamaz; veri içinde '</script>' geçerse (örn. bir dosya
+    başlığında) tarayıcı script etiketini erken kapatır ve geri kalanı HTML
+    olarak yorumlar - bu XSS'e yol açar. '</' dizisini kaçışlayarak önlüyoruz."""
+    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+
 def page_html(user, case, tasks, stats, tmpls, checklist, notice=None):
     case_id=case["id"] if case else ""
     case_dict=rowdict(case) if case else {}
-    case_json=json.dumps(case_dict,ensure_ascii=False)
-    tasks_json=json.dumps([task_json(t) for t in tasks],ensure_ascii=False)
-    templates_json=json.dumps([rowdict(t) for t in tmpls],ensure_ascii=False)
-    stats_json=json.dumps(stats,ensure_ascii=False)
-    checklist_json=json.dumps(checklist,ensure_ascii=False)
+    case_json=_safe_json(case_dict)
+    tasks_json=_safe_json([task_json(t) for t in tasks])
+    templates_json=_safe_json([rowdict(t) for t in tmpls])
+    stats_json=_safe_json(stats)
+    checklist_json=_safe_json(checklist)
     return f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Görevler</title><style>
 *{{box-sizing:border-box}}body{{font-family:Arial,sans-serif;background:#f3f6f9;margin:0;color:#20252b}}.wrap{{max-width:1180px;margin:25px auto;padding:0 16px}}.top{{display:flex;justify-content:space-between;gap:15px;align-items:center;flex-wrap:wrap}}.card{{background:#fff;border-radius:16px;padding:20px;margin:15px 0;box-shadow:0 4px 20px #0001}}.grid{{display:grid;grid-template-columns:2fr 1fr;gap:18px}}.stats{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}}.stat{{padding:14px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb}}.stat b{{display:block;font-size:24px;margin-top:4px}}.task{{border:1px solid #e1e6eb;border-radius:12px;padding:14px;margin:10px 0;background:#fff}}.task.overdue{{border-left:5px solid #dc2626}}.task.today{{border-left:5px solid #f59e0b}}.task.completed{{opacity:.65}}.row{{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}}.title{{font-weight:700;font-size:16px}}.meta{{font-size:13px;color:#66717c;margin-top:6px}}.badge{{padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}}.high{{background:#fee2e2;color:#991b1b}}.normal{{background:#fef3c7;color:#92400e}}.low{{background:#dcfce7;color:#166534}}button{{background:#1769e0;color:#fff;border:0;border-radius:8px;padding:9px 13px;font-weight:700;cursor:pointer}}button.secondary{{background:#44515f}}button.green{{background:#15803d}}button.red{{background:#b91c1c}}input,textarea,select{{width:100%;padding:9px;border:1px solid #ccd4dc;border-radius:8px;font:inherit;margin-top:5px}}textarea{{min-height:70px}}label{{display:block;font-weight:700;margin-top:10px}}.actions{{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}}.notice{{padding:12px;border-radius:9px;background:#eff6ff;color:#1d4ed8;margin:10px 0}}.warning{{padding:12px;border-radius:9px;background:#fff7ed;color:#9a3412;margin:10px 0}}.error{{padding:12px;border-radius:9px;background:#fee2e2;color:#991b1b;margin:10px 0}}.success{{padding:12px;border-radius:9px;background:#dcfce7;color:#166534;margin:10px 0}}.modal{{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;padding:20px;z-index:5}}.modal.show{{display:flex}}.modal-box{{background:#fff;border-radius:14px;padding:22px;max-width:560px;width:100%;max-height:90vh;overflow:auto}}a{{color:#1769e0;text-decoration:none}}@media(max-width:850px){{.grid{{grid-template-columns:1fr}}.stats{{grid-template-columns:repeat(2,1fr)}}}}
