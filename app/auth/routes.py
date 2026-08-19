@@ -56,16 +56,22 @@ async def logout(request: Request):
 async def profile_page(request: Request):
     u = get_user_by_session(request.cookies.get("session"))
     if not u: return RedirectResponse("/auth/login", 303)
-    current = escape(u["iban"] or "", quote=True)
+    def escv(k): return escape(str(u.get(k) or ""), quote=True)
     return page("Profilim", f"""<div class="card narrow"><h1>Profilim</h1>
-    <p class="hint">Buraya girdiğiniz IBAN, kendi oluşturduğunuz belgelerde şablonda <code>[iban]</code>
-    yazan yerlere otomatik olarak yazılır. Her belgede tekrar girmenize gerek kalmaz.</p>
+    <p class="hint">Profildeki arabulucu bilgileri Bilgi Havuzu'ndaki Arabulucu bölümüne otomatik başlangıç değeri olarak gelir. Dosya özelinde değiştirilebilir.</p>
     <form method="post" action="/auth/profile">
-    <label>IBAN</label><input name="iban" value="{current}" placeholder="TR__ ____ ____ ____ ____ ____ __">
+    <h2>Arabulucu Bilgileri</h2>
+    <label>Adı Soyadı</label><input name="mediator_name" value="{escv('mediator_name')}">
+    <label>T.C. Kimlik No</label><input name="mediator_tc" value="{escv('mediator_tc')}">
+    <label>Sicil No</label><input name="mediator_registry" value="{escv('mediator_registry')}">
+    <label>Adres</label><textarea name="mediator_address">{escv('mediator_address')}</textarea>
+    <label>Telefon</label><input name="mediator_phone" value="{escv('mediator_phone')}">
+    <label>E-posta</label><input name="mediator_email" value="{escv('mediator_email')}">
+    <label>IBAN</label><input name="iban" value="{escv('iban')}" placeholder="TR__ ____ ____ ____ ____ ____ __">
     <button>Kaydet</button></form></div>""")
 
 @router.post("/profile")
-async def update_profile(request: Request, iban: str = Form("")):
+async def update_profile(request: Request, mediator_name: str = Form(""), mediator_tc: str = Form(""), mediator_registry: str = Form(""), mediator_address: str = Form(""), mediator_phone: str = Form(""), mediator_email: str = Form(""), iban: str = Form("")):
     u = get_user_by_session(request.cookies.get("session"))
     if not u: return RedirectResponse("/auth/login", 303)
     clean = re.sub(r"\s+", "", iban or "").upper()
@@ -73,6 +79,14 @@ async def update_profile(request: Request, iban: str = Form("")):
         return page("Profilim", '<div class="card narrow"><p class="err">Geçersiz IBAN. '
                     'Türkiye IBAN\'ları "TR" ile başlamalı ve TR dahil toplam 26 karakter olmalıdır.</p>'
                     '<a href="/auth/profile"><button>Geri Dön</button></a></div>', 400)
-    repos.users.update(u["id"], {"iban": clean or None})
+    repos.users.update(u["id"], {
+        "iban": clean or None,
+        "mediator_name": mediator_name.strip() or None,
+        "mediator_tc": mediator_tc.strip() or None,
+        "mediator_registry": mediator_registry.strip() or None,
+        "mediator_address": mediator_address.strip() or None,
+        "mediator_phone": mediator_phone.strip() or None,
+        "mediator_email": mediator_email.strip() or None,
+    })
     return page("Profilim", '<div class="card narrow"><p class="ok">IBAN kaydedildi.</p>'
                 '<a href="/"><button>Ana Sayfa</button></a></div>')

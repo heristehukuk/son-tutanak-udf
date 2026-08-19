@@ -1,3 +1,11 @@
+-- User mediator profile fields
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_tc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_registry TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_address TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_email TEXT;
+
 -- Klasör sistemi migration - mevcut folders tablosu daha önce oluşturulmuş olsa bile güvenle çalışır.
 -- Mevcut verileri silmez.
 
@@ -61,3 +69,5 @@ CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id);
 CREATE INDEX IF NOT EXISTS idx_generated_documents_folder ON generated_documents(folder_id);
 
 ALTER TABLE custom_templates ADD COLUMN IF NOT EXISTS doc_kind TEXT DEFAULT 'diger';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_case_owner_parent_name ON folders(case_id, owner_id, parent_id, name) WHERE status IN ('active','restored') AND is_global=0;

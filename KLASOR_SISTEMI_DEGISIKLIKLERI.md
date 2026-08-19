@@ -38,3 +38,11 @@ Kaynak: son-tutanak-udf-main (4).zip. Önceki ZIP sürümleri kaynak alınmamı�
 3. **Dosyalarım ekranı:** Her aktif dosya kartına doğrudan `📁 Klasör` bağlantısı eklendi.
 
 Ayrıca takvim oluşturma sırasında Dosya No'nun boş olmasına izin verildi; başvurucu, dosya türü ve geçerli süreç başlangıç tarihi varsa takvim/görev akışı devam eder ve başlıkta `Dosya No yok` kullanılır.
+
+## V22 düzeltmeleri
+- Belgeler arası kimlik çakışması denetimi eklendi: Dosya No, Başvuru No veya Başvurucu adı mevcut case ile çelişirse mevcut case korunur ve belge yeni case'e kaydedilir.
+- Boş gelen alanlar mevcut case bilgilerini silmez; yeni belge yalnızca dolu alanları tamamlar.
+- Case silindiğinde bağlı klasör ağacı da silinen duruma alınır; alt klasörler dahil.
+- Admin klasör geri yüklemesinde bağlı alt klasörler de geri yüklenir.
+- Bilgi Havuzu takvim açıklaması artık Dosya No'yu zorunlu göstermiyor.
+- Supabase klasör migration'ına aynı case seviyesinde aktif/restored özel klasör adlarında benzersizlik indeksi eklendi.

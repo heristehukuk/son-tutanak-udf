@@ -12,7 +12,7 @@ from datetime import date
 FIELDS=[
 ('basvuruNo','Başvuru No'),('dosyaNo','Dosya No'),
 ('arabulucuAdi','Arabulucu Adı'),('arabulucuTc','Arabulucu T.C. Kimlik No'),
-('arabulucuSicil','Arabulucu Sicil No'),('arabulucuAdres','Arabulucu Adres'),
+('arabulucuSicil','Arabulucu Sicil No'),('arabulucuAdres','Arabulucu Adres'),('arabulucuTelefon','Arabulucu Telefon'),('arabulucuEposta','Arabulucu E-posta'),
 ('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
 ('basvurucuTelefon','Başvurucu Telefon'),('basvurucuEposta','Başvurucu E-Posta'),
@@ -45,10 +45,12 @@ def normalize_bracket_text(s):
 FIELD_SYNONYMS = {
     'basvuruno':'basvuruNo','basvurunumarasi':'basvuruNo',
     'dosyano':'dosyaNo','dosyanumarasi':'dosyaNo',
-    'arabulucuadi':'arabulucuAdi','arabulucuadisoyadi':'arabulucuAdi','arabulucu':'arabulucuAdi',
-    'arabulucutc':'arabulucuTc','arabulucutckimlikno':'arabulucuTc','arabulucutckimliknumarasi':'arabulucuTc',
-    'arabulucusicil':'arabulucuSicil','arabulucusicilno':'arabulucuSicil','arbsicilno':'arabulucuSicil','arbsicilnumarasi':'arabulucuSicil',
+    'arabulucuadi':'arabulucuAdi','arabulucuadisoyadi':'arabulucuAdi','arabulucu':'arabulucuAdi','arbadi':'arabulucuAdi','arabulucuad':'arabulucuAdi',
+    'arabulucutc':'arabulucuTc','arabulucutckimlikno':'arabulucuTc','arabulucutckimliknumarasi':'arabulucuTc','arbtc':'arabulucuTc','arbutc':'arabulucuTc',
+    'arabulucusicil':'arabulucuSicil','arabulucusicilno':'arabulucuSicil','arabulucusicilnumarasi':'arabulucuSicil','arbsicil':'arabulucuSicil','arbsicilno':'arabulucuSicil','arbsicilnumarasi':'arabulucuSicil',
     'arabulucuadres':'arabulucuAdres','arabulucubüroadresi':'arabulucuAdres','arabulucuburoadresi':'arabulucuAdres',
+    'arbtel':'arabulucuTelefon','arabulucutelefon':'arabulucuTelefon','arabulucutelefonno':'arabulucuTelefon','arabulucutelefonnumarasi':'arabulucuTelefon','arabulucuceptelefonu':'arabulucuTelefon','arabulucuceptel':'arabulucuTelefon','arbtelefon':'arabulucuTelefon','arbtelefonno':'arabulucuTelefon','arbtelefonnumarasi':'arabulucuTelefon','arbceptelefonu':'arabulucuTelefon','arbceptel':'arabulucuTelefon',
+    'arbeposta':'arabulucuEposta','arabulucueposta':'arabulucuEposta','arabulucuepostaadresi':'arabulucuEposta','arabulucuemail':'arabulucuEposta','arbemail':'arabulucuEposta','arbepostaadresi':'arabulucuEposta',
     'basvurucuadisoyadi':'basvurucuAdiSoyadi','basvurucuadi':'basvurucuAdiSoyadi','basvurucu':'basvurucuAdiSoyadi',
     'basvurucuadres':'basvurucuAdres',
     'basvurucuvekili':'basvurucuVekili','basvurucuvekil':'basvurucuVekili',
@@ -1028,7 +1030,7 @@ def fill_general(text,values):
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None):
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
-            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres']),
+            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
             ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi']),
             ('Harcama Pusulası',['daireBilgisi'])]
@@ -1050,27 +1052,25 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
             el=f'<input name="{k}" value="{v}">'
         hint=f'<p class="hint">{escape(HINTS[k])}</p>' if k in HINTS else ''
         return f'<div class="field"><label>{escape(LABELS[k])}</label>{el}{hint}<label class="lock"><input type="checkbox" name="locked" value="{k}" {lock}> 🔒 Sabitle</label></div>'
+    def section_card(title, inner, filled, total, open_default=False, extra_class=''):
+        state=' open' if open_default else ''
+        badge = f'<span class="section-status">✓ {filled}/{total}</span>' if total and filled==total else (f'<span class="section-status">⚠ {filled}/{total}</span>' if filled else f'<span class="section-status">○ 0/{total}</span>')
+        return f'<details class="card info-section {extra_class}"{state}><summary><span>{escape(title)}</span>{badge}</summary><div class="section-body">{inner}</div></details>'
     cards=''
-    # Başvurucu türü otomatik belirlenir; kullanıcıdan ayrıca seçim istenmez.
-    atax=escape(values.get('basvurucuVergiNo',''),quote=True)
-    atc=escape(values.get('basvurucuTcKimlik',''),quote=True)
-    if values.get('basvurucuVergiNo') and values.get('basvurucuTcKimlik'):
-        type_note='⚠️ T.C. Kimlik No ve Vergi No birlikte dolu; lütfen kontrol edin.'
-    elif values.get('basvurucuVergiNo'):
-        type_note='Firma / kurum olarak algılandı (Vergi No mevcut).'
-    elif values.get('basvurucuTcKimlik'):
-        type_note='Gerçek kişi olarak algılandı (T.C. Kimlik No mevcut).'
-    else:
-        type_note='Taraf türü numara bilgisine göre otomatik belirlenecek.'
-    # Kimlik (TC/Vergi No) ve iletişim bilgileri artık tek "Başvurucu" kartında birlikte.
-    basvurucu_fields=''.join(field(k) for k in ['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta'])
-    cards+=f'''<section class="card"><h2>Başvurucu</h2>
-<label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}">
-<label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}">
-<p class="hint">{escape(type_note)}</p>
-{basvurucu_fields}</section>'''
-    for title,ks in groups:
-        cards+=f'<section class="card"><h2>{escape(title)}</h2>'+''.join(field(k) for k in ks)+'</section>'
+    def make_fields(ks): return ''.join(field(k) for k in ks)
+    def filled_count(ks): return sum(1 for k in ks if str(values.get(k,'')).strip())
+    atax=escape(values.get('basvurucuVergiNo',''),quote=True); atc=escape(values.get('basvurucuTcKimlik',''),quote=True)
+    if values.get('basvurucuVergiNo') and values.get('basvurucuTcKimlik'): type_note='⚠️ T.C. Kimlik No ve Vergi No birlikte dolu; lütfen kontrol edin.'
+    elif values.get('basvurucuVergiNo'): type_note='Firma / kurum olarak algılandı (Vergi No mevcut).'
+    elif values.get('basvurucuTcKimlik'): type_note='Gerçek kişi olarak algılandı (T.C. Kimlik No mevcut).'
+    else: type_note='Taraf türü numara bilgisine göre otomatik belirlenecek.'
+    applicant_keys=['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta','basvurucuTcKimlik','basvurucuVergiNo']
+    applicant_inner=(f'<label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}"><label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}"><p class="hint">{escape(type_note)}</p>'+make_fields(['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']))
+    cards+=section_card('Dosya Bilgileri',make_fields(['basvuruNo','dosyaNo']),filled_count(['basvuruNo','dosyaNo']),2,True)
+    arb_keys=['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']
+    cards+=section_card('Arabulucu Bilgileri',make_fields(arb_keys),filled_count(arb_keys),len(arb_keys),True)
+    cards+=section_card('Başvurucu Bilgileri',applicant_inner,filled_count(applicant_keys),len(applicant_keys),False)
+    for title,ks in groups: cards+=section_card(title,make_fields(ks),filled_count(ks),len(ks),False)
 
     resp_html=''
     count=max(len(respondents),1)
@@ -1092,7 +1092,7 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
             else:
                 el=f'<input name="resp_{i}_{f}" value="{v}">'
             body+=f'<div class="party"><label>{escape(RESP_LABELS[f])}</label>{el}</div>'
-        resp_html+=f'<section class="card respondent-card">{h}{body}</section>'
+        resp_html+=f'<details class="card respondent-card"><summary><span>Karşı Taraf {i+1}</span><span class="section-status">{"✓ Dolu" if p.get("name") else "○ Boş"}</span></summary><div class="section-body">{h}{body}</div></details>'
 
     # Ücret Pusulası ayrı üretim akışıdır; şablon seçiminde gösterilmez.
     fixed_choices=[]
@@ -1113,9 +1113,10 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     msg=f'<div class="ok">{escape(message)}</div>' if message else ''
     nav='<p><a href="/"><button type="button" class="secondary">← Ana Sayfa</button></a> <a href="/templates/"><button type="button" class="secondary">Şablonlarım</button></a></p>'
     html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>
-*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
-</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1>{nav}<p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Harcama Pusulası</h2><p class="hint">Bu ekrandaki Dosya Türü, Karşı Taraflar ve Arabulucu bilgilerini kullanarak, IBAN'ınızı (Profilim) da ekleyerek Harcama Pusulası üretir.</p><button type="submit" formaction="/harcama-pusulasi/build" class="secondary">📄 Harcama Pusulası Oluştur</button></section><section class="card"><h2>📅 Takvim ve Görevler</h2><p class="hint">Dosya No, Başvurucu Adı Soyadı, Dosya Türü ve Süreç Başlangıç Tarihi doldurulduysa bu dosya için otomatik süre hatırlatıcıları ve 6 standart görev oluşturur (zaten oluşturulmuşsa tekrar oluşturmaz, sadece günceller).</p><button type="submit" formaction="/case/schedule" class="secondary">📅 Takvime Ekle / Görevleri Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
+*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.info-section>summary,.respondent-card>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:18px;font-weight:bold}.info-section>summary::-webkit-details-marker,.respondent-card>summary::-webkit-details-marker{display:none}.info-section>summary:before,.respondent-card>summary:before{content:'▶';font-size:12px;margin-right:8px}.info-section[open]>summary:before,.respondent-card[open]>summary:before{content:'▼'}.section-status{font-size:12px;font-weight:normal;color:#53606b;white-space:nowrap}.section-body{padding-top:12px}.pool-controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 16px}.pool-controls button{margin-top:0}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
+</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1>{nav}<div class="pool-controls"><button type="button" class="secondary" onclick="setAllSections(true)">▼ Tümünü Aç</button><button type="button" class="secondary" onclick="setAllSections(false)">▶ Tümünü Kapat</button></div><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Harcama Pusulası</h2><p class="hint">Bu ekrandaki Dosya Türü, Karşı Taraflar ve Arabulucu bilgilerini kullanarak, IBAN'ınızı (Profilim) da ekleyerek Harcama Pusulası üretir.</p><button type="submit" formaction="/harcama-pusulasi/build" class="secondary">📄 Harcama Pusulası Oluştur</button></section><section class="card"><h2>📅 Takvim ve Görevler</h2><p class="hint">Başvurucu Adı Soyadı, Dosya Türü ve Süreç Başlangıç Tarihi doldurulduysa bu dosya için otomatik süre hatırlatıcıları ve 6 standart görev oluşturur (zaten oluşturulmuşsa tekrar oluşturmaz, sadece günceller).</p><button type="submit" formaction="/case/schedule" class="secondary">📅 Takvime Ekle / Görevleri Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
 let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Taraf Türü</label><select name="resp_'+i+'_type"><option value="kisi">Kişi</option><option value="kurum">Kurum / Şirket</option></select></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Vergi No</label><input name="resp_'+i+'_tax"></div><div class="party"><label>Adı Soyadı / Unvanı</label><input name="resp_'+i+'_name"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
+function setAllSections(open){document.querySelectorAll('details.info-section,details.respondent-card').forEach(function(d){d.open=open})}
 function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
 function toggleMeeting(){const s=document.querySelector('select[name=gorusmeSekli]');const f=document.querySelector('textarea[name=gorusmeAdresi]');if(!s||!f)return;f.parentElement.style.display=s.value==='Yüz yüze'?'block':'none';}document.addEventListener('change',e=>{if(e.target.name==='gorusmeSekli')toggleMeeting()});document.addEventListener('DOMContentLoaded',toggleMeeting);</script></body></html>'''
     return html.replace('__FILENAME__',escape(filename)).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))

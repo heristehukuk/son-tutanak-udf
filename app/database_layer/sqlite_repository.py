@@ -550,9 +550,13 @@ class SQLiteFolderRepository(FolderRepository):
     def soft_delete(self, folder_id: str, user_id: str):
         from app.auth.service import now
         stamp=now().isoformat()
+        queue=[folder_id]
         with connect() as c:
-            c.execute("UPDATE folders SET status='deleted',deleted_at=?,deleted_by=?,updated_at=? WHERE id=?",(stamp,user_id,stamp,folder_id))
-            c.execute("UPDATE folders SET status='deleted',deleted_at=?,deleted_by=?,updated_at=? WHERE parent_id=? AND status<>'deleted'",(stamp,user_id,stamp,folder_id))
+            while queue:
+                parent=queue.pop(0)
+                c.execute("UPDATE folders SET status='deleted',deleted_at=?,deleted_by=?,updated_at=? WHERE id=?",(stamp,user_id,stamp,parent))
+                children=[r[0] for r in c.execute("SELECT id FROM folders WHERE parent_id=? AND status<>'deleted'",(parent,)).fetchall()]
+                queue.extend(children)
         return self.get(folder_id)
 
     def restore(self, folder_id: str, admin_id: str, restored_parent_id: str):

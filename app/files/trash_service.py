@@ -31,13 +31,23 @@ def soft_delete_case(case_id: str, actor_id: str, is_admin: bool) -> dict:
         raise ValueError("Bu dosyayı silme yetkiniz yok.")
     if case.get("status") == "deleted":
         return case
+    stamp = now().isoformat()
     updated = repos.cases.update(case_id, {
         "status": "deleted",
-        "deleted_at": now().isoformat(),
+        "deleted_at": stamp,
         "deleted_by": actor_id,
         "deleted_from_status": case.get("status") or "open",
-        "updated_at": now().isoformat(),
+        "updated_at": stamp,
     })
+    # Case silinince bağlı klasör ağacı da anında silinmiş duruma alınır.
+    from app.folders.service import ensure_case_folders
+    try:
+        root_rows = ensure_case_folders(case.get("owner_id"), case_id)
+        root = next((x for x in root_rows if x.get("folder_type") == "root" and x.get("status") == "active"), None)
+        if root:
+            repos.folders.soft_delete(root["id"], actor_id)
+    except Exception:
+        pass
     repos.audit.create({
         "actor_id": actor_id, "action": "case_soft_delete", "target_id": case_id,
         "details": f"Dosya silindi (önceki durum: {case.get('status')}).",
@@ -58,6 +68,16 @@ def restore_case(case_id: str, actor_id: str) -> dict:
         "deleted_at": None, "deleted_by": None, "deleted_from_status": None,
         "updated_at": now().isoformat(),
     })
+    # Case geri alındığında klasör kökü ve bağlı alt klasörleri de eski çalışma durumuna getir.
+    try:
+        from app.folders.service import ensure_case_folders
+        rows = ensure_case_folders(case.get("owner_id"), case_id)
+        for row in rows:
+            if row.get("status") in ("deleted", "restored"):
+                parent = row.get("parent_id")
+                repos.folders.update(row["id"], {"status":"active", "deleted_at":None, "deleted_by":None, "restored_at":None, "restored_by":None, "restored_parent_id":None, "updated_at":now().isoformat()})
+    except Exception:
+        pass
     repos.audit.create({
         "actor_id": actor_id, "action": "case_restore", "target_id": case_id,
         "details": f"Dosya çöp kutusundan geri getirildi (durum: {restored_status}).",

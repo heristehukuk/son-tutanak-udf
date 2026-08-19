@@ -20,6 +20,7 @@ from app.auth.service import get_user_by_session, now
 from app.auth.security import hash_password
 from app.plans.service import seed_plans, get_plan, feature_enabled, consume
 from app.files.service import save_document, create_case, save_generated
+from app.files.case_matcher import detect_identity_conflicts, merge_case_values
 from app.customtemplates.service import list_visible_templates, get_template, can_use_template, get_template_bytes
 from app.documents.engine import (
     read_udf, extract, render_editor, form_state, merge_state, template_bytes, TEMPLATES,
@@ -72,6 +73,19 @@ def bootstrap_admin():
 
 def current_user(request):
     return get_user_by_session(request.cookies.get("session"))
+
+def apply_mediator_profile_defaults(user, values):
+    """Profildeki arabulucu bilgilerini Bilgi Havuzu'nda yalnızca boş alanlara varsayılan yapar."""
+    mapping={
+        "mediator_name":"arabulucuAdi", "mediator_tc":"arabulucuTc",
+        "mediator_registry":"arabulucuSicil", "mediator_address":"arabulucuAdres",
+        "mediator_phone":"arabulucuTelefon", "mediator_email":"arabulucuEposta",
+    }
+    out=dict(values)
+    for src,dst in mapping.items():
+        if not str(out.get(dst) or "").strip() and user.get(src):
+            out[dst]=str(user.get(src))
+    return out
 
 def require_user(request):
     u=current_user(request)
@@ -192,23 +206,48 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         values,respondents=merge_state(values,respondents,locked,locked_resp,nv,nr)
+        values=apply_mediator_profile_defaults(u, values)
         cid=str(form.get("case_id") or "")
+        notice="Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur."
         if cid:
-            save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
             case=repos.cases.get(cid)
-            if case and case.get("owner_id")==u["id"]:
-                repos.cases.update(cid,{"file_no":values.get("dosyaNo") or case.get("file_no"),"application_no":values.get("basvuruNo") or case.get("application_no"),
-                    "title":values.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
-                    "file_type":values.get("dosyaTuru") or case.get("file_type"),
-                    "start_date":values.get("baslangicTarihi") or case.get("start_date"),
-                    "case_data_json":json.dumps(values,ensure_ascii=False),"updated_at":now().isoformat()})
+            if not case or case.get("owner_id")!=u["id"]:
+                return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
+            conflicts=detect_identity_conflicts(case,nv)
+            if conflicts:
+                # Mevcut case ASLA ezilmez. Çelişen belge ayrı bir case'e alınır.
+                new_case_id=create_case(
+                    u["id"],
+                    nv.get("dosyaNo") or None,
+                    nv.get("basvuruNo") or None,
+                    nv.get("basvurucuAdiSoyadi") or "Yeni Dosya",
+                    nv.get("dosyaTuru") or None,
+                    nv.get("baslangicTarihi") or None,
+                    json.dumps(merge_case_values({},nv,nr),ensure_ascii=False),
+                )
+                save_document(u["id"],data,merge_file.filename or "ek belge",kind,new_case_id)
+                cid=new_case_id
+                values,respondents,locked,locked_resp=nv,nr,set(),set()
+                conflict_text="; ".join(f'{x["label"]}: {x["old"]} ≠ {x["new"]}' for x in conflicts)
+                notice=f"⚠️ Yeni belge mevcut dosyayla çeliştiği için ayrı bir dosya oluşturuldu. Çakışan bilgiler: {conflict_text}"
+            else:
+                merged_case_data=merge_case_values(case,values,respondents)
+                save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
+                repos.cases.update(cid,{
+                    "file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),
+                    "application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),
+                    "title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
+                    "file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),
+                    "start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),
+                    "case_data_json":json.dumps(merged_case_data,ensure_ascii=False),
+                    "updated_at":now().isoformat()})
+                values=merged_case_data.copy()
                 from app.folders.service import update_case_folder_name, ensure_case_folders
-                ensure_case_folders(u["id"], cid); update_case_folder_name(u["id"], cid)
+                ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
-                           "Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur.",
-                           custom_templates=list_visible_templates(u["id"]))
-        if cid:html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
-                                  f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+                           notice,custom_templates=list_visible_templates(u["id"]))
+        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
+                          f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge bilgi havuzuna eklenemedi: {e}",400)

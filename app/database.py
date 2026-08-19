@@ -29,7 +29,8 @@ def init_db():
             password_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
             plan_id TEXT NOT NULL DEFAULT 'free', is_super_admin INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL, approved_at TEXT, expires_at TEXT, last_ip TEXT, iban TEXT,
-            mediator_no INTEGER UNIQUE
+            mediator_no INTEGER UNIQUE,
+            mediator_name TEXT, mediator_tc TEXT, mediator_registry TEXT, mediator_address TEXT, mediator_phone TEXT, mediator_email TEXT
         );
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -189,3 +190,7 @@ def init_db():
             c.execute("ALTER TABLE generated_documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
         c.execute("CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_generated_documents_folder ON generated_documents(folder_id)")
+        user_cols3 = [r["name"] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+        for col in ("mediator_name","mediator_tc","mediator_registry","mediator_address","mediator_phone","mediator_email"):
+            if col not in user_cols3:
+                c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")

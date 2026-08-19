@@ -163,8 +163,36 @@ def restore_folder(admin_user: dict, folder_id: str) -> dict:
     folder = repos.folders.get(folder_id)
     if not folder or folder.get("status") != "deleted":
         raise ValueError("Silinmiş klasör bulunamadı.")
-    root = ensure_restored_root(folder.get("owner_id"), folder.get("case_id"))
-    return repos.folders.restore(folder_id, admin_user["id"], root["id"])
+    restored_root = ensure_restored_root(folder.get("owner_id"), folder.get("case_id"))
+    restored = repos.folders.restore(folder_id, admin_user["id"], restored_root["id"])
+    # Alt klasörlerin parent ilişkisini koru; yalnızca durumlarını geri al.
+    if folder.get("case_id"):
+        rows = repos.folders.list_for_case(folder["case_id"])
+        descendants = []
+        pending = [folder_id]
+        seen = {folder_id}
+        while pending:
+            parent = pending.pop(0)
+            for row in rows:
+                if row.get("id") in seen:
+                    continue
+                if row.get("parent_id") == parent:
+                    seen.add(row["id"])
+                    descendants.append(row)
+                    pending.append(row["id"])
+        stamp = _now()
+        for row in descendants:
+            if row.get("status") == "deleted":
+                repos.folders.update(row["id"], {
+                    "status": "restored",
+                    "restored_at": stamp,
+                    "restored_by": admin_user["id"],
+                    "restored_parent_id": restored["id"],
+                    "deleted_at": None,
+                    "deleted_by": None,
+                    "updated_at": stamp,
+                })
+    return restored
 
 
 def grant_folder_access(admin_user: dict, folder_id: str, user_id: str) -> None:

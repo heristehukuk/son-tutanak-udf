@@ -511,10 +511,13 @@ class SupabaseFolderRepository(FolderRepository):
     def soft_delete(self, folder_id: str, user_id: str):
         from app.auth.service import now
         stamp=now().isoformat(); self.update(folder_id,{"status":"deleted","deleted_at":stamp,"deleted_by":user_id,"updated_at":stamp})
-        folder=self.get(folder_id)
-        if folder and folder.get("case_id"):
-            for child in self.list_for_case(folder["case_id"]):
-                if child.get("parent_id")==folder_id and child.get("status")!="deleted": self.update(child["id"],{"status":"deleted","deleted_at":stamp,"deleted_by":user_id,"updated_at":stamp})
+        queue=[folder_id]
+        while queue:
+            parent=queue.pop(0)
+            children=get_supabase().table("folders").select("id").eq("parent_id",parent).neq("status","deleted").execute().data or []
+            for child in children:
+                self.update(child["id"],{"status":"deleted","deleted_at":stamp,"deleted_by":user_id,"updated_at":stamp})
+                queue.append(child["id"])
         return self.get(folder_id)
     def restore(self, folder_id: str, admin_id: str, restored_parent_id: str):
         from app.auth.service import now
