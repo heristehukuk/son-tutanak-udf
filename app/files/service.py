@@ -15,7 +15,13 @@ def save_document(owner_id,data,filename,kind="source",case_id=None):
     folder_id=None
     if case_id:
         from app.folders.service import folder_for_document
-        folder=folder_for_document(owner_id, case_id, kind=kind)
+        # NOT: 'kind' burada belgenin çıkarma yöntemini ("ocr"/"udf") tutar,
+        # klasör türünü DEĞİL. save_document() her zaman kullanıcının
+        # yüklediği KAYNAK belgeler için çağrılır, bu yüzden klasör
+        # yönlendirmesi için her zaman sabit "source" rolünü kullanıyoruz -
+        # aksi halde "ocr"/"udf" değeri DOC_FOLDER_TYPES'ta eşleşmediği için
+        # belge yanlışlıkla "07 - Diğer Belgeler"e düşer.
+        folder=folder_for_document(owner_id, case_id, kind="source")
         folder_id=folder.get("id") if folder else None
     repos.documents.create({
         "id":doc_id,"case_id":case_id,"folder_id":folder_id,"owner_id":owner_id,"original_name":filename,
@@ -41,7 +47,10 @@ def save_generated(owner_id,case_id,data,template_name,doc_kind=None,ext=".udf")
     folder_id=None
     if case_id:
         from app.folders.service import folder_for_document
-        folder=folder_for_document(owner_id, case_id, doc_kind=doc_kind, kind="source")
+        # doc_kind bilinmiyorsa (ör. kütüphaneye kaydedilmemiş, tek seferlik özel
+        # şablon çıktısı) "01 - Kaynak Belgeler"e DEĞİL "07 - Diğer Belgeler"e
+        # düşmeli - bu yüzden kind için "source" yerine boş bırakıyoruz.
+        folder=folder_for_document(owner_id, case_id, doc_kind=doc_kind, kind=None)
         folder_id=folder.get("id") if folder else None
     repos.generated_documents.create({
         "id":gid,"case_id":case_id,"folder_id":folder_id,"owner_id":owner_id,"original_template":template_name,
