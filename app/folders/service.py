@@ -139,6 +139,8 @@ def can_view_folder(user: dict, folder: dict) -> bool:
 def visible_folders(user: dict, case_id: str | None = None) -> list[dict]:
     if _is_admin(user):
         rows = repos.folders.list_all_active_or_deleted()
+        if case_id:
+            rows = [r for r in rows if r.get("case_id") == case_id]
     else:
         rows = repos.folders.list_visible_to_user(user["id"], case_id=case_id)
     return [r for r in rows if _is_admin(user) or can_view_folder(user, r)]
