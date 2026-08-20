@@ -29,7 +29,7 @@ class Repositories:
                 SupabaseMessageRepository, SupabaseTariffRepository, SupabaseAuditRepository,
                 SupabasePlanRepository, SupabaseUsageRepository, SupabaseCalendarEventRepository,
                 SupabaseTaskRepository, SupabaseTaskTemplateRepository, SupabaseTaskHistoryRepository,
-                SupabasePermissionRepository, SupabaseCounterRepository, SupabaseFolderRepository,
+                SupabasePermissionRepository, SupabaseCounterRepository, SupabaseFolderRepository, SupabasePendingMergeRepository,
             )
             self.users = SupabaseUserRepository()
             self.sessions = SupabaseSessionRepository()
@@ -49,6 +49,7 @@ class Repositories:
             self.permissions = SupabasePermissionRepository()
             self.counters = SupabaseCounterRepository()
             self.folders = SupabaseFolderRepository()
+            self.pending_merges = SupabasePendingMergeRepository()
         else:
             from app.database_layer.sqlite_repository import (
                 SQLiteUserRepository, SQLiteSessionRepository, SQLiteCaseRepository,
@@ -56,7 +57,7 @@ class Repositories:
                 SQLiteMessageRepository, SQLiteTariffRepository, SQLiteAuditRepository,
                 SQLitePlanRepository, SQLiteUsageRepository, SQLiteCalendarEventRepository,
                 SQLiteTaskRepository, SQLiteTaskTemplateRepository, SQLiteTaskHistoryRepository,
-                SQLitePermissionRepository, SQLiteCounterRepository, SQLiteFolderRepository,
+                SQLitePermissionRepository, SQLiteCounterRepository, SQLiteFolderRepository, SQLitePendingMergeRepository,
             )
             self.users = SQLiteUserRepository()
             self.sessions = SQLiteSessionRepository()
@@ -76,6 +77,7 @@ class Repositories:
             self.permissions = SQLitePermissionRepository()
             self.counters = SQLiteCounterRepository()
             self.folders = SQLiteFolderRepository()
+            self.pending_merges = SQLitePendingMergeRepository()
 
 
 # Tek, paylaşılan örnek (singleton).

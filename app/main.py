@@ -1,12 +1,14 @@
 import os
 
 import io, os, re, json, urllib.parse
+from uuid import uuid4
 import pytesseract
 from pathlib import Path
 from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from app.database import init_db, connect
 from app.database_layer import repos
+from app.storage import storage
 from app.auth.routes import router as auth_router
 from app.files.routes import router as files_router
 from app.admin.routes import router as admin_router
@@ -18,9 +20,10 @@ from app.feepusula.routes import router as feepusula_router
 from app.feepusula.service import seed_known_tariffs
 from app.auth.service import get_user_by_session, now
 from app.auth.security import hash_password
+from app.files.pending_service import create_pending, get_pending_for_user, cleanup_expired_pending_merges, serialize_row
 from app.plans.service import seed_plans, get_plan, feature_enabled, consume
 from app.files.service import save_document, create_case, save_generated
-from app.files.case_matcher import detect_identity_conflicts, merge_case_values
+from app.files.case_matcher import detect_identity_conflicts, merge_case_values, case_values, IDENTITY_FIELDS
 from app.customtemplates.service import list_visible_templates, get_template, can_use_template, get_template_bytes
 from app.documents.engine import (
     read_udf, extract, render_editor, form_state, merge_state, template_bytes, TEMPLATES,
@@ -108,6 +111,7 @@ async def home(request:Request):
         from app.files.trash_service import cleanup_expired_deleted_cases
         from app.folders.service import cleanup_deleted_folders
         cleanup_expired_pending()
+        cleanup_expired_pending_merges()
         cleanup_expired_deleted_cases()
         cleanup_deleted_folders()
         u=current_user(request)  # durumu değişmiş olabilir (pending->rejected)
@@ -190,11 +194,21 @@ async def schedule_case(request:Request):
         return HTMLResponse(html,400)
     from app.modules.calendar.service import CalendarService
     result=CalendarService().add_case(u["id"],dosya_no,basvurucu,dosya_turu,start,main_case_id=cid,case_data=values)
-    task_result = {"created": result.get("tasks_created", 0), "reason": "ok"}
-    if not result.get("tasks_created"):
+    task_result = {"created": int(result.get("tasks_created", 0)), "reason": result.get("tasks_result", "ok")}
+    expected_tasks = 6
+    if task_result["reason"] not in ("ok", "created") or task_result["created"] + int(result.get("tasks_existing", 0)) < expected_tasks:
+        # İkinci güvenlik çağrısı: eski bir dosyada şablonlar yeni seed edilmiş olabilir.
         from app.modules.tasks.storage import create_standard_tasks
         task_result = create_standard_tasks(u["id"], cid)
-    return RedirectResponse(f"/tasks/?case_id={cid}",303)
+    current_tasks = repos.tasks.list_for_case(cid)
+    standard_count = sum(1 for t in current_tasks if t.get("is_standard"))
+    if standard_count < expected_tasks:
+        return HTMLResponse(
+            "Takvim kayıtları oluşturuldu ancak standart 6 görevin tamamı oluşturulamadı. "
+            f"Oluşan standart görev: {standard_count}/6. Görev şablonlarını ve dosya başlangıç tarihini kontrol edin.",
+            500,
+        )
+    return RedirectResponse(f"/tasks?case_id={cid}",303)
 
 @app.post("/merge",response_class=HTMLResponse)
 async def merge(request:Request,merge_file:UploadFile=File(...)):
@@ -205,8 +219,7 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         text,kind=extract_any_source(merge_file.filename or "",data); nv,nr=extract(text); plan=get_plan(u["plan_id"])
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
-        values,respondents=merge_state(values,respondents,locked,locked_resp,nv,nr)
-        values=apply_mediator_profile_defaults(u, values)
+        base_values=apply_mediator_profile_defaults(u, values)
         cid=str(form.get("case_id") or "")
         notice="Yeni belgeden bilgiler bilgi havuzuna eklendi. Kilitli alanlar korunmuştur."
         if cid:
@@ -215,35 +228,31 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
                 return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
             conflicts=detect_identity_conflicts(case,nv)
             if conflicts:
-                # Mevcut case ASLA ezilmez. Çelişen belge ayrı bir case'e alınır.
-                new_case_id=create_case(
-                    u["id"],
-                    nv.get("dosyaNo") or None,
-                    nv.get("basvuruNo") or None,
-                    nv.get("basvurucuAdiSoyadi") or "Yeni Dosya",
-                    nv.get("dosyaTuru") or None,
-                    nv.get("baslangicTarihi") or None,
-                    json.dumps(merge_case_values({},nv,nr),ensure_ascii=False),
-                )
-                save_document(u["id"],data,merge_file.filename or "ek belge",kind,new_case_id)
-                cid=new_case_id
-                values,respondents,locked,locked_resp=nv,nr,set(),set()
-                conflict_text="; ".join(f'{x["label"]}: {x["old"]} ≠ {x["new"]}' for x in conflicts)
-                notice=f"⚠️ Yeni belge mevcut dosyayla çeliştiği için ayrı bir dosya oluşturuldu. Çakışan bilgiler: {conflict_text}"
-            else:
-                merged_case_data=merge_case_values(case,values,respondents)
-                save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
-                repos.cases.update(cid,{
-                    "file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),
-                    "application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),
-                    "title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
-                    "file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),
-                    "start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),
-                    "case_data_json":json.dumps(merged_case_data,ensure_ascii=False),
-                    "updated_at":now().isoformat()})
-                values=merged_case_data.copy()
-                from app.folders.service import update_case_folder_name, ensure_case_folders
-                ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
+                # Kullanıcı karar verene kadar HİÇBİR veritabanı kaydı oluşturulmaz.
+                # Belge geçici olarak storage'a kaydedilir, kararı /merge/resolve uygular.
+                ext=Path(merge_file.filename or "ek").suffix.lower() or ".bin"
+                pending_key=f"pending/{uuid4()}{ext}"
+                storage.save(pending_key,data)
+                create_pending(u["id"], cid, pending_key, merge_file.filename or "ek belge", kind, nv, nr, base_values, respondents, locked, locked_resp, conflicts)
+                return HTMLResponse(render_conflict_page(
+                    case,conflicts,nv,nr,base_values,respondents,locked,locked_resp,
+                    pending_key,merge_file.filename or "ek belge",kind))
+            values,respondents=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
+            save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
+            merged_case_data=merge_case_values(case,values,respondents)
+            repos.cases.update(cid,{
+                "file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),
+                "application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),
+                "title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
+                "file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),
+                "start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),
+                "case_data_json":json.dumps(merged_case_data,ensure_ascii=False),
+                "updated_at":now().isoformat()})
+            values=merged_case_data.copy()
+            from app.folders.service import update_case_folder_name, ensure_case_folders
+            ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
+        else:
+            values,respondents=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
                            notice,custom_templates=list_visible_templates(u["id"]))
         html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
@@ -251,6 +260,76 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge bilgi havuzuna eklenemedi: {e}",400)
+
+
+def render_conflict_page(case,conflicts,nv,nr,base_values,base_respondents,locked,locked_resp,pending_key,filename,kind):
+    from html import escape as esc
+    rows=[]
+    for c in conflicts:
+        field=c["field"]; label=c["label"]; old=c["old"]; new=c["new"]
+        rows.append(f'''<div class="card"><b>{esc(label)}</b>
+        <label><input type="radio" name="choice_{field}" value="old" checked> Mevcut değeri koru: <b>{esc(old)}</b></label>
+        <label><input type="radio" name="choice_{field}" value="new"> Yeni değeri kullan: <b>{esc(new)}</b></label>
+        <label><input type="radio" name="choice_{field}" value="custom"> Özel değer gir: <input type="text" name="custom_{field}" placeholder="Yeni değer yazın"></label>
+        </div>''')
+    return f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Çakışan Bilgiler</title>
+<style>body{{font-family:Arial,sans-serif;background:#f3f6f9;margin:0;color:#20252b}}.wrap{{max-width:720px;margin:30px auto;padding:0 16px}}.card{{background:#fff;border-radius:14px;padding:18px;margin:12px 0;box-shadow:0 4px 16px #0001}}button{{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;margin:6px 8px 0 0;font-size:15px}}.primary{{background:#1769e0;color:#fff}}.secondary{{background:#b45309;color:#fff}}label{{display:block;margin:8px 0;font-weight:normal}}input[type=text]{{padding:6px;border:1px solid #ccd4dc;border-radius:6px;margin-left:6px}}.warn{{background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:14px;margin:14px 0}}</style></head><body><div class="wrap">
+<h1>⚠️ Çakışan Bilgiler Bulundu</h1>
+<div class="warn">Yeni yüklediğiniz <b>{esc(filename)}</b> belgesi ile bu dosyanın (<b>{esc(case.get('file_no') or case.get('title') or '')}</b>) bilgileri arasında farklar var. Kararınız verilene kadar belge geçici olarak bekletilir.</div>
+{''.join(rows)}
+<form method="post" action="/merge/resolve">
+<input type="hidden" name="pending_key" value="{esc(pending_key)}">
+<button class="primary" type="submit" name="action" value="merge">✓ Seçtiklerimle Mevcut Dosyaya Ekle</button>
+<button class="secondary" type="submit" name="action" value="separate">📁 Bunu Ayrı Yeni Dosya Yap</button>
+</form></div></body></html>'''
+
+
+@app.post("/merge/resolve",response_class=HTMLResponse)
+async def merge_resolve(request:Request):
+    u=require_user(request)
+    if not u:return RedirectResponse("/auth/login",303)
+    form=await request.form(); action=str(form.get("action") or "merge"); pending_key=str(form.get("pending_key") or "")
+    row=get_pending_for_user(pending_key,u)
+    if not row:return HTMLResponse("Bekleyen belge bulunamadı, süresi dolmuş veya erişim yetkiniz yok.",403)
+    payload=serialize_row(row)
+    nv,nr=payload["incoming"],payload["respondents"]
+    base_values,base_respondents=payload["base_values"],payload["base_respondents"]
+    locked,locked_resp=payload["locked"],payload["locked_resp"]
+    filename=row.get("original_filename") or "ek belge"; kind=row.get("kind") or "source"; owner_id=row.get("owner_id"); cid=row.get("case_id") or ""
+    try:data=storage.read(pending_key)
+    except Exception:return HTMLResponse("Bekleyen belge okunamadı, lütfen tekrar yükleyin.",400)
+    case=repos.cases.get(cid) if cid else None
+    if action=="separate":
+        new_case_id=create_case(owner_id,nv.get("dosyaNo") or None,nv.get("basvuruNo") or None,nv.get("basvurucuAdiSoyadi") or "Yeni Dosya",nv.get("dosyaTuru") or None,nv.get("baslangicTarihi") or None,json.dumps(merge_case_values({},nv,nr),ensure_ascii=False))
+        save_document(owner_id,data,filename,kind,new_case_id)
+        repos.pending_merges.update(row["id"],{"status":"resolved","resolved_at":now().isoformat(),"resolved_by":u["id"]})
+        try:storage.delete(pending_key)
+        except Exception:pass
+        values,respondents,locked,locked_resp=nv,nr,set(),set(); cid=new_case_id; notice="Belge ayrı bir yeni dosya olarak kaydedildi."
+    else:
+        if not case:return HTMLResponse("Bağlı dosya bulunamadı.",404)
+        current=case_values(case); resolved=dict(nv)
+        for field in IDENTITY_FIELDS:
+            choice=form.get(f"choice_{field}")
+            if choice=="old": resolved[field]=current.get(field) or ""
+            elif choice=="custom":
+                custom_val=str(form.get(f"custom_{field}") or "").strip()
+                if custom_val: resolved[field]=custom_val
+        values,respondents=merge_state(base_values,base_respondents,locked,locked_resp,resolved,nr)
+        merged_case_data=merge_case_values(case,values,respondents)
+        save_document(owner_id,data,filename,kind,cid)
+        repos.cases.update(cid,{"file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),"application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),"title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya","file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),"start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),"case_data_json":json.dumps(merged_case_data,ensure_ascii=False),"updated_at":now().isoformat()})
+        from app.folders.service import update_case_folder_name, ensure_case_folders
+        ensure_case_folders(owner_id,cid); update_case_folder_name(owner_id,cid)
+        repos.pending_merges.update(row["id"],{"status":"resolved","resolved_at":now().isoformat(),"resolved_by":u["id"]})
+        try:storage.delete(pending_key)
+        except Exception:pass
+        values=merged_case_data.copy(); notice="Seçtiğiniz bilgilerle mevcut dosya güncellendi."
+    html=render_editor(filename,values,respondents,locked,locked_resp,notice,custom_templates=list_visible_templates(owner_id))
+    html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+    html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
+    return HTMLResponse(html)
 
 @app.post("/build")
 async def build(request:Request):

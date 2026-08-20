@@ -46,7 +46,13 @@ CREATE TABLE IF NOT EXISTS users (
     expires_at      TEXT,
     last_ip         TEXT,
     iban            TEXT,
-    mediator_no     INTEGER UNIQUE
+    mediator_no     INTEGER UNIQUE,
+    mediator_name       TEXT,
+    mediator_tc         TEXT,
+    mediator_registry   TEXT,
+    mediator_address    TEXT,
+    mediator_phone      TEXT,
+    mediator_email      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -265,6 +271,19 @@ CREATE TABLE IF NOT EXISTS fee_tariffs (
     updated_at      TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pending_merges (
+    id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    case_id TEXT REFERENCES cases(id) ON DELETE SET NULL, pending_key TEXT UNIQUE NOT NULL,
+    original_filename TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'source',
+    incoming_json TEXT NOT NULL, respondents_json TEXT NOT NULL,
+    base_values_json TEXT NOT NULL, base_respondents_json TEXT NOT NULL,
+    locked_json TEXT NOT NULL, locked_resp_json TEXT NOT NULL, conflicts_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+    resolved_at TEXT, resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_merges_owner_status ON pending_merges(owner_id,status);
+CREATE INDEX IF NOT EXISTS idx_pending_merges_expires ON pending_merges(status,expires_at);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     actor_id    TEXT,
@@ -347,6 +366,12 @@ ALTER TABLE cases ADD COLUMN IF NOT EXISTS case_data_json TEXT;
 ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS doc_kind TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS case_id TEXT REFERENCES cases(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_no INTEGER UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_tc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_registry TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_address TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mediator_email TEXT;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS registry_no TEXT UNIQUE;
 
 CREATE TABLE IF NOT EXISTS counters (

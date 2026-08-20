@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository,
+    TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository, PendingMergeRepository,
 )
 
 
@@ -470,6 +470,28 @@ class SupabaseTaskHistoryRepository(TaskHistoryRepository):
         r = c.table("task_history").select("*").eq("task_id", task_id).order("created_at").execute()
         return r.data or []
 
+
+
+class SupabasePendingMergeRepository(PendingMergeRepository):
+    def create(self, record: dict) -> dict:
+        from uuid import uuid4
+        vals=dict(record); vals.setdefault("id",str(uuid4()))
+        c=get_supabase(); c.table("pending_merges").insert(vals).execute(); return self.get(vals["id"])
+    def get(self, pending_id: str):
+        return _first(get_supabase().table("pending_merges").select("*").eq("id",pending_id).execute().data)
+    def get_by_key(self, pending_key: str):
+        return _first(get_supabase().table("pending_merges").select("*").eq("pending_key",pending_key).execute().data)
+    def update(self, pending_id: str, values: dict):
+        if not values:return self.get(pending_id)
+        get_supabase().table("pending_merges").update(values).eq("id",pending_id).execute(); return self.get(pending_id)
+    def delete(self, pending_id: str) -> None:
+        get_supabase().table("pending_merges").delete().eq("id",pending_id).execute()
+    def list_for_owner(self, owner_id: str):
+        return get_supabase().table("pending_merges").select("*").eq("owner_id",owner_id).eq("status","pending").order("created_at",desc=True).execute().data or []
+    def list_all(self):
+        return get_supabase().table("pending_merges").select("*").eq("status","pending").order("created_at",desc=True).execute().data or []
+    def list_expired(self, cutoff: str):
+        return get_supabase().table("pending_merges").select("*").eq("status","pending").lt("expires_at",cutoff).execute().data or []
 
 
 class SupabaseFolderRepository(FolderRepository):

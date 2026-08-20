@@ -17,6 +17,7 @@ from app.database_layer import repos
 from app.web import page
 from app.customtemplates.service import list_all_templates
 from app.feepusula.service import list_tariffs, add_tariff, delete_tariff, CATEGORY_LABELS
+from app.files.pending_service import cleanup_expired_pending_merges
 router=APIRouter()
 
 STATUS_LABELS={"pending":"Onay Bekliyor","active":"Aktif","suspicious":"Şüpheli","rejected":"Reddedildi","banned":"Yasaklı"}
@@ -49,6 +50,7 @@ async def dashboard(request:Request):
     u=staff(request)
     if not u:return HTMLResponse("Yetkisiz.",403)
     cleanup_expired_pending()
+    cleanup_expired_pending_merges()
     cleanup_expired_deleted_cases()
     can={p:require_permission(u,p) for p in PERMISSIONS}
     users=repos.users.list_all()
@@ -126,6 +128,13 @@ async def dashboard(request:Request):
 
     folder_html='<h2>📁 Klasör Yönetimi</h2><p><a href="/folders/admin"><button>Klasörleri Yönet</button></a></p>' if u.get('is_super_admin') else ''
 
+    pending_rows = repos.pending_merges.list_all() if can.get("files.view") else []
+    pending_html = '<h2>⚠️ Bekleyen Çakışmalı Belgeler</h2>' + (''.join(
+        f'<div class="card"><b>{escape(r.get("original_filename") or "Belge")}</b>'
+        f'<p>Sahip ID: {escape(r.get("owner_id") or "-")} | Dosya ID: {escape(r.get("case_id") or "-")} | Son tarih: {escape(r.get("expires_at") or "-")}</p></div>'
+        for r in pending_rows
+    ) or '<p>Bekleyen çakışmalı belge yok.</p>')
+
     backup_html='<h2>Tam Yedek</h2><p><a href="/admin/backup"><button>Tüm Sistemi JSON Olarak İndir</button></a></p>' if u.get("is_super_admin") else ""
 
     trash_html=""
@@ -136,7 +145,7 @@ async def dashboard(request:Request):
     body=(STYLE+"<h1>Yönetim</h1><h2>Üyeler</h2>"+"".join(us)+
           (("<h2>Dosyalar (Kayıt No)</h2>"+"".join(cs)) if can["files.view"] else "")+
           (("<h2>Yüklenen Belgeler</h2>"+"".join(ds)) if can["files.view"] else "")+
-          "<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
+          pending_html+"<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
           "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>"+
           audit_html+trash_html+folder_html+backup_html)
     return page("Admin",body)

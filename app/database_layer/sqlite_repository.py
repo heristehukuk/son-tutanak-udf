@@ -17,7 +17,7 @@ from app.database_layer.base import (
     GeneratedDocumentRepository, TemplateRepository, MessageRepository,
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
-    TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository,
+    TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository, PendingMergeRepository,
 )
 
 
@@ -486,6 +486,36 @@ class SQLiteTaskHistoryRepository(TaskHistoryRepository):
             rows = c.execute("SELECT * FROM task_history WHERE task_id=? ORDER BY created_at ASC", (task_id,)).fetchall()
         return [dict(r) for r in rows]
 
+
+
+class SQLitePendingMergeRepository(PendingMergeRepository):
+    def create(self, record: dict) -> dict:
+        rid=record.get("id") or str(uuid4()); vals=dict(record); vals["id"]=rid
+        cols=",".join(vals.keys()); qs=",".join("?" for _ in vals)
+        with connect() as c: c.execute(f"INSERT INTO pending_merges ({cols}) VALUES ({qs})", tuple(vals.values()))
+        return self.get(rid)
+    def get(self, pending_id: str):
+        with connect() as c: row=c.execute("SELECT * FROM pending_merges WHERE id=?",(pending_id,)).fetchone()
+        return _row_to_dict(row)
+    def get_by_key(self, pending_key: str):
+        with connect() as c: row=c.execute("SELECT * FROM pending_merges WHERE pending_key=?",(pending_key,)).fetchone()
+        return _row_to_dict(row)
+    def update(self, pending_id: str, values: dict):
+        if not values:return self.get(pending_id)
+        cols=",".join(f"{k}=?" for k in values)
+        with connect() as c:c.execute(f"UPDATE pending_merges SET {cols} WHERE id=?",(*values.values(),pending_id))
+        return self.get(pending_id)
+    def delete(self, pending_id: str) -> None:
+        with connect() as c:c.execute("DELETE FROM pending_merges WHERE id=?",(pending_id,))
+    def list_for_owner(self, owner_id: str):
+        with connect() as c: rows=c.execute("SELECT * FROM pending_merges WHERE owner_id=? AND status='pending' ORDER BY created_at DESC",(owner_id,)).fetchall()
+        return [dict(r) for r in rows]
+    def list_all(self):
+        with connect() as c: rows=c.execute("SELECT * FROM pending_merges WHERE status='pending' ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    def list_expired(self, cutoff: str):
+        with connect() as c: rows=c.execute("SELECT * FROM pending_merges WHERE status='pending' AND expires_at < ?",(cutoff,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 class SQLiteFolderRepository(FolderRepository):

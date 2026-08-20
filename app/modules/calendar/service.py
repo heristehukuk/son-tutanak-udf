@@ -69,7 +69,7 @@ class CalendarService:
             cid = create_case(owner_id, case_no, application_no, applicant_name, file_type)
 
         update_case_info(owner_id, cid, case_no, applicant_name, file_type, start_date.isoformat(), case_data=metadata)
-        create_standard_tasks(owner_id, cid)
+        task_result = create_standard_tasks(owner_id, cid)
 
         deadlines = calculate_deadlines(start_date, file_type)
         display_case_no = case_no or "Dosya No yok"
@@ -96,7 +96,10 @@ class CalendarService:
             "normal_due_date": deadlines["normal_due_date"].isoformat(),
             "extended_due_date": deadlines["extended_due_date"].isoformat(),
             "normal_event_id": normal_event["id"], "extended_event_id": extended_event["id"],
-            "is_commercial": deadlines["is_commercial"], "tasks_created": 6,
+            "is_commercial": deadlines["is_commercial"],
+            "tasks_created": int(task_result.get("created", 0)),
+            "tasks_existing": len(repos.tasks.list_for_case(cid)),
+            "tasks_result": task_result.get("reason", "ok"),
         }
 
     def get_case(self, case_id, owner_id=None):

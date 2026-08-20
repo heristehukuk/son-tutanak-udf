@@ -104,6 +104,8 @@ async def tasks_page(request: Request, case_id: str = "", case_no: str = "", app
     notice=None
     if task_result.get("reason") == "start_date_missing":
         notice="Görevleri oluşturmak için Süreç Başlangıç Tarihi bulunamadı. Bilgi Havuzundaki tarihi tamamlayın."
+    elif task_result.get("reason") not in ("ok", "created") and task_result.get("created", 0) == 0:
+        notice=f"Standart görevler oluşturulamadı: {task_result.get('reason', 'bilinmeyen hata')}"
     elif task_result.get("reason") == "case_deleted":
         return HTMLResponse("Bu dosya silinmiş durumda; görevleri görüntüleyemezsiniz.",410)
     return page_html(u,case,list_tasks(u["id"],case_id),global_stats(u["id"]),templates(u["id"]),document_checklist(u["id"],case_id),notice)
