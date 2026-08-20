@@ -303,7 +303,16 @@ DOC_KIND_TITLES = {
     "son_tutanak": "Son Tutanak",
     "davet_mektubu": "Davet Mektubu",
     "ucret_pusulasi": "Ücret Pusulası",
-    "ust_yazi": "Üst Yazı",
+    "ust_yazi_son_tutanak": "Üst Yazı – Son Tutanak",
+    "ust_yazi_ucret_pusulasi": "Üst Yazı – Ücret Pusulası",
+}
+
+# Eski (bölünmeden önceki) belgelerde doc_kind hâlâ tek "ust_yazi" olabilir -
+# bunlar, iki yeni kutudan hangisiyle eşleştiğini bilemeyiz, o yüzden ikisinde
+# de "oluşturuldu" say (geriye dönük uyumluluk, veri kaybı olmasın diye).
+DOC_KIND_ALIASES = {
+    "ust_yazi_son_tutanak": {"ust_yazi_son_tutanak", "ust_yazi"},
+    "ust_yazi_ucret_pusulasi": {"ust_yazi_ucret_pusulasi", "ust_yazi"},
 }
 
 
@@ -317,7 +326,8 @@ def document_checklist(owner_id, case_id):
     rows.sort(key=lambda d: d.get("created_at") or "", reverse=True)
     out = []
     for key, title in DOC_KIND_TITLES.items():
-        match = next((r for r in rows if r.get("doc_kind") == key), None)
+        accepted = DOC_KIND_ALIASES.get(key, {key})
+        match = next((r for r in rows if r.get("doc_kind") in accepted), None)
         out.append({"key": key, "title": title, "created": bool(match), "document": match})
     return out
 
