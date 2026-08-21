@@ -1,0 +1,1 @@
+"""Case folder management module."""

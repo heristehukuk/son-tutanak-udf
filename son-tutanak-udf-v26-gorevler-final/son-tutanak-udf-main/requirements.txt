@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+jinja2
+pypdf
+pillow
+pytesseract
+pdf2image
+uvicorn
+supabase
+openpyxl
