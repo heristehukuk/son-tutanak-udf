@@ -177,6 +177,8 @@ async def schedule_case(request:Request):
     if not case or case["owner_id"]!=u["id"]:return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
     dosya_no=values.get("dosyaNo") or case.get("file_no") or ""
     basvurucu=values.get("basvurucuAdiSoyadi") or case.get("title") or ""
+    if str(basvurucu).strip() in {"Yeni Dosya", "Yeni dosya"}:
+        basvurucu=""
     dosya_turu=values.get("dosyaTuru") or case.get("file_type") or ""
     baslangic_raw=values.get("baslangicTarihi") or case.get("start_date") or ""
     from app.modules.tasks.storage import _parse_start

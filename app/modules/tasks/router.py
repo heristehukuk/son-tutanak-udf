@@ -8,6 +8,11 @@ from .storage import ensure_schema, seed_user_templates, get_case, update_case_i
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
+def esc(value):
+    import html
+    return html.escape(str(value or ''), quote=True)
+
+
 def current_user(request):
     return get_user_by_session(request.cookies.get("session"))
 
@@ -78,7 +83,7 @@ function checkDate(){{const d=document.getElementById('taskDate').value;if(CASE.
 document.getElementById('taskDate').addEventListener('change',checkDate);
 async function saveTask(){{const id=document.getElementById('taskId').value;const payload={{case_id:CASE.id,title:document.getElementById('taskTitle').value,due_date:document.getElementById('taskDate').value,priority:document.getElementById('taskPriority').value,description:document.getElementById('taskDescription').value}};const url=id?'/tasks/api/'+id:'/tasks/api';const r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}});const d=await r.json();if(!r.ok){{msg(d.detail||'İşlem başarısız.','error');return}}TASKS=d.tasks;STATS=d.stats;render();renderStats();closeModal();msg(id?'Görev güncellendi.':'Özel görev oluşturuldu.')}}
 async function setStatus(id,status){{const r=await fetch('/tasks/api/'+id,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{status}})}});const d=await r.json();if(!r.ok){{msg(d.detail||'İşlem başarısız.','error');return}}TASKS=d.tasks;STATS=d.stats;render();renderStats();msg('Görev durumu güncellendi.')}}
-async function showHistory(id){{const r=await fetch('/tasks/api/'+id+'/history');const d=await r.json();if(!r.ok){{msg(d.detail||'Geçmiş alınamadı.','error');return}}alert(d.history.map(x=>x.created_at+' — '+x.action).join('\n')||'Geçmiş kaydı yok.')}}
+async function showHistory(id){{const r=await fetch('/tasks/api/'+id+'/history');const d=await r.json();if(!r.ok){{msg(d.detail||'Geçmiş alınamadı.','error');return}}alert(d.history.map(x=>x.created_at+' — '+x.action).join('\\n')||'Geçmiş kaydı yok.')}}
 async function completeCase(){{if(!confirm('Dosyayı tamamlandı olarak işaretlemek istediğinizden emin misiniz?'))return;const r=await fetch('/tasks/case-status', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_id:CASE.id,status:'completed'}})}});const d=await r.json();if(!r.ok){{msg(d.detail||'Dosya kapatılamadı.','error');return}}CASE.status='completed';renderCase();msg('Dosya tamamlandı olarak işaretlendi.')}}
 async function reopenCase(){{const r=await fetch('/tasks/case-status', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{case_id:CASE.id,status:'open'}})}});const d=await r.json();if(!r.ok){{msg(d.detail||'Dosya yeniden açılamadı.','error');return}}CASE.status='open';renderCase();msg('Dosya yeniden açıldı.')}}
 
@@ -102,7 +107,9 @@ async def tasks_page(request: Request, case_id: str = "", case_no: str = "", app
         case=get_case(u["id"],case_id)
     task_result=create_standard_tasks(u["id"],case_id)
     notice=None
-    if task_result.get("reason") == "start_date_missing":
+    if task_result.get("reason") == "applicant_missing":
+        notice="Takvim ve görevleri oluşturmak için Başvurucu Adı Soyadı bilgisini tamamlayın."
+    elif task_result.get("reason") == "start_date_missing":
         notice="Görevleri oluşturmak için Süreç Başlangıç Tarihi bulunamadı. Bilgi Havuzundaki tarihi tamamlayın."
     elif task_result.get("reason") not in ("ok", "created") and task_result.get("created", 0) == 0:
         notice=f"Standart görevler oluşturulamadı: {task_result.get('reason', 'bilinmeyen hata')}"

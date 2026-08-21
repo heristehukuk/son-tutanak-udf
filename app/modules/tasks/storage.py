@@ -139,6 +139,9 @@ def create_standard_tasks(owner_id, case_id):
         return {"created": 0, "reason": "case_not_found"}
     if case.get("status") == "deleted":
         return {"created": 0, "reason": "case_deleted"}
+    applicant = str(case.get("title") or "").strip()
+    if applicant in {"", "Yeni Dosya", "Yeni dosya"}:
+        return {"created": 0, "reason": "applicant_missing"}
     start = _resolve_case_start_date(case_id, case)
     if not start:
         return {"created": 0, "reason": "start_date_missing"}
