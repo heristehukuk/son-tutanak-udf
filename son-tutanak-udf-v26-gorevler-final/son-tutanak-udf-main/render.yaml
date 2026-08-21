@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: son-tutanak-udf-v16
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
-    autoDeploy: true
