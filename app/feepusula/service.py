@@ -1,4 +1,3 @@
-
 import re, io
 from uuid import uuid4
 from pathlib import Path
@@ -17,10 +16,11 @@ CATEGORY_KEYWORDS = [
     ("ortakligin_giderilmesi", ["ortaklığın giderilmesi", "ortaklik"]),
     ("is", ["iş", "işçi", "işveren", "kıdem", "ihbar"]),
     ("tuketici", ["tüketici"]),
+    ("aile", ["aile", "boşanma", "nafaka", "velayet", "mal rejimi"]),
 ]
 CATEGORY_LABELS = {
     "kira": "Kira", "ticari": "Ticari", "ortakligin_giderilmesi": "Ortaklığın Giderilmesi",
-    "is": "İşçi-İşveren", "tuketici": "Tüketici", "diger": "Diğer",
+    "is": "İşçi-İşveren", "tuketici": "Tüketici", "diger": "Diğer", "aile": "Aile Hukuku",
 }
 
 def detect_category(dosya_turu_text):
@@ -106,8 +106,21 @@ def delete_tariff(tariff_id):
     repos.tariffs.delete(tariff_id)
 
 def seed_known_tariffs():
-    """Şu ana kadar doğrulanmış örnek rakamları (kullanıcının verdiği örnek pusulalardan) tohumlar.
-    Tabloda hiç satır yoksa çalışır; tam resmi tarife Excel'i yüklenince admin panelinden tamamlanmalı."""
+    """2026 Arabuluculuk Asgari Ücret Tarifesi'nin resmi tablosunu (Dava Şartı Arabuluculuk
+    Süreci Sonunda Savcılıkça Ödenecek Ücretler - Anlaşma Dışında) tohumlar.
+    Tabloda hiç satır yoksa çalışır. Zaten satır varsa (ör. eski/eksik veri) elle
+    migration çalıştırılmalı - bkz. migration_fee_tariffs_2026.sql"""
     if repos.tariffs.list_all(): return
-    add_tariff("kira", 2, 2, 4680, 2026)
-    add_tariff("ticari", 3, 3, 6400, 2026)
+    # (kategori, min_taraf, max_taraf, ücret) - max_taraf=None -> "11 ve üzeri"
+    ROWS = {
+        "kira":                  [(2,2,4680),(3,5,5080),(6,10,5280),(11,None,5480)],
+        "ortakligin_giderilmesi":[(2,2,4680),(3,5,5080),(6,10,5280),(11,None,5480)],
+        "is":                    [(2,2,4520),(3,5,4920),(6,10,5120),(11,None,5320)],
+        "ticari":                [(2,2,6000),(3,5,6400),(6,10,6600),(11,None,6800)],
+        "tuketici":              [(2,2,4000),(3,5,4400),(6,10,4600),(11,None,4800)],
+        "aile":                  [(2,2,4000),(3,5,4400),(6,10,4600),(11,None,4800)],
+        "diger":                 [(2,2,4000),(3,5,4400),(6,10,4600),(11,None,4800)],
+    }
+    for category, brackets in ROWS.items():
+        for min_p, max_p, price in brackets:
+            add_tariff(category, min_p, max_p, price, 2026)
