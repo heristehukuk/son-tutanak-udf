@@ -1,6 +1,6 @@
 import os
 
-import io, os, re, json, urllib.parse
+import io, os, re, json, urllib.parse, zipfile
 from uuid import uuid4
 import pytesseract
 from pathlib import Path
@@ -154,6 +154,9 @@ async def edit(request:Request,file:UploadFile=File(...)):
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         values,respondents=extract(text)
+        # Profildeki arabulucu bilgileri yalnızca bilgi havuzunda boş kalan alanlara
+        # başlangıç değeri olarak gelir; kaynak belgeden gelen gerçek dosya verileri ezilmez.
+        values=apply_mediator_profile_defaults(u, values)
         cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya",values.get("dosyaTuru"))
         save_document(u["id"],data,file.filename or "kaynak",kind,cid)
         html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]))
@@ -333,6 +336,37 @@ async def merge_resolve(request:Request):
     html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
     return HTMLResponse(html)
 
+def _safe_download_name(value, fallback="davet_mektubu"):
+    name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]', '_', str(value or ''))
+    name=re.sub(r'\s+', ' ', name).strip(' ._')
+    return name or fallback
+
+def _build_davet_outputs(data, values, respondents, u):
+    """Başvurucu + her karşı taraf için ayrı davet UDF'si üretir."""
+    xml, old, files = read_udf(data)
+    applicant={
+        'name': values.get('basvurucuAdiSoyadi',''), 'address': values.get('basvurucuAdres',''),
+        'proxy': values.get('basvurucuVekili',''), 'phone': values.get('basvurucuTelefon',''),
+        'email': values.get('basvurucuEposta',''), 'tc': values.get('basvurucuTcKimlik',''),
+        'tax': values.get('basvurucuVergiNo',''),
+    }
+    recipients=[('Başvurucu', applicant)]
+    for i, r in enumerate(respondents, 1):
+        if str(r.get('name') or '').strip():
+            recipients.append((f'Karşı Taraf {i}', dict(r)))
+    outputs=[]
+    for role, recipient in recipients:
+        v=dict(values)
+        v['_userIban']=u.get('iban') or ''
+        v['_recipient']=recipient
+        new=fill_custom_template(old,v,respondents)
+        out_xml=update_offsets(xml,old,new)
+        result=build_udf(files,out_xml,old,new)
+        label=role
+        filename=_safe_download_name(f"Davet Mektubu - {recipient.get('name') or role}")+".udf"
+        outputs.append((label,filename,result))
+    return outputs
+
 @app.post("/build")
 async def build(request:Request):
     u=require_user(request)
@@ -364,13 +398,46 @@ async def build(request:Request):
             data=template_bytes(choice);source_name=Path(TEMPLATES[choice][1]).stem
             doc_kind=FIXED_TEMPLATE_DOC_KIND
         xml,old,files=read_udf(data)
+        # Davet mektubu özel akışı: tek belge yerine başvurucu ve her karşı taraf için ayrı UDF.
+        if doc_kind == "davet_mektubu":
+            davet_outputs=_build_davet_outputs(data,values,respondents,u)
+            cid=str(form.get("case_id") or "")
+            if cid:
+                case=repos.cases.get(cid)
+                if case and case.get("owner_id")==u["id"]:
+                    template_label="Davet Mektubu"
+                    for role,filename,davet_result in davet_outputs:
+                        save_generated(u["id"],cid,davet_result,f"{template_label} - {role}",doc_kind="davet_mektubu")
+                    repos.cases.update(cid,{
+                        "file_no":values.get("dosyaNo") or case.get("file_no"),
+                        "application_no":values.get("basvuruNo") or case.get("application_no"),
+                        "title":values.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
+                        "file_type":values.get("dosyaTuru") or case.get("file_type"),
+                        "start_date":values.get("baslangicTarihi") or case.get("start_date"),
+                        "case_data_json":json.dumps(values,ensure_ascii=False),
+                        "updated_at":now().isoformat()})
+                    from app.folders.service import update_case_folder_name, ensure_case_folders
+                    ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
+            # Çoklu UDF'leri tek indirmede koruyarak gönder.
+            archive=io.BytesIO()
+            with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as zf:
+                used=set()
+                for _role,filename,davet_result in davet_outputs:
+                    base=filename; n=2
+                    while filename in used:
+                        filename=f"{Path(base).stem} ({n}).udf"; n+=1
+                    used.add(filename)
+                    zf.writestr(filename,davet_result)
+            archive.seek(0)
+            zip_name=_safe_download_name(f"Davet Mektupları - {values.get('basvurucuAdiSoyadi') or values.get('dosyaNo') or 'Dosya'}")+".zip"
+            quoted=urllib.parse.quote(zip_name)
+            ascii_fallback=re.sub(r'[^A-Za-z0-9_.-]','_',zip_name) or "davet_mektuplari.zip"
+            return StreamingResponse(archive,media_type="application/zip",headers={"Content-Disposition":f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"})
         # "custom" (tek seferlik) yüklemede de köşeli parantez varsa yeni motoru kullan.
         if choice=="custom" and not is_bracket_template:
             recognized,_=scan_custom_template(old)
             if recognized:is_bracket_template=True
         if is_bracket_template:
-            # Kendi şablonu / köşeli parantez sistemi: sabit etiket motoru yerine [alan] değişimi kullanılır.
-            # [iban] belgeyi oluşturan kullanıcının kendi profilinden (Profilim ekranı) otomatik gelir.
             values["_userIban"]=u["iban"] or ""
             new=fill_custom_template(old,values,respondents)
             xml=update_offsets(xml,old,new)
