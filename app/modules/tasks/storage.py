@@ -204,6 +204,30 @@ def get_task(owner_id, task_id):
     return task
 
 
+def complete_standard_task_by_key(owner_id, case_id, task_key, actor_id=None):
+    """Belirli bir standart görevi, zaten tamamlandıysa dokunmadan otomatik tamamlar."""
+    rows = [t for t in repos.tasks.list_for_case(case_id)
+            if t.get("owner_id") == owner_id and t.get("task_key") == task_key and t.get("is_standard")]
+    if not rows:
+        return None
+    task = rows[0]
+    if task.get("status") == "completed":
+        return task
+    if task.get("status") == "cancelled":
+        return task
+    stamp = now_iso()
+    repos.tasks.update(task["id"], {
+        "status": "completed", "completed_at": stamp, "cancelled_at": None, "updated_at": stamp
+    })
+    repos.task_history.create({
+        "task_id": task["id"], "actor_id": actor_id or owner_id, "action": "auto_completed",
+        "old_value": json.dumps({"status": task.get("status")}, ensure_ascii=False),
+        "new_value": json.dumps({"status": "completed", "reason": "davet_mektubu_olusturuldu"}, ensure_ascii=False),
+        "created_at": stamp,
+    })
+    return repos.tasks.get(task["id"])
+
+
 def create_custom_task(owner_id, case_id, title, due_date, priority="normal", description=""):
     case = get_case(owner_id, case_id)
     if not case:

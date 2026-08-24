@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from app.auth.service import create_user, authenticate, create_session, delete_session, get_user_by_session
 from app.database_layer import repos
+import os
 from app.web import page
 
 router = APIRouter()
@@ -79,7 +80,7 @@ async def update_profile(request: Request, mediator_name: str = Form(""), mediat
         return page("Profilim", '<div class="card narrow"><p class="err">Geçersiz IBAN. '
                     'Türkiye IBAN\'ları "TR" ile başlamalı ve TR dahil toplam 26 karakter olmalıdır.</p>'
                     '<a href="/auth/profile"><button>Geri Dön</button></a></div>', 400)
-    repos.users.update(u["id"], {
+    payload = {
         "iban": clean or None,
         "mediator_name": mediator_name.strip() or None,
         "mediator_tc": mediator_tc.strip() or None,
@@ -87,6 +88,21 @@ async def update_profile(request: Request, mediator_name: str = Form(""), mediat
         "mediator_address": mediator_address.strip() or None,
         "mediator_phone": mediator_phone.strip() or None,
         "mediator_email": mediator_email.strip() or None,
-    })
-    return page("Profilim", '<div class="card narrow"><p class="ok">IBAN kaydedildi.</p>'
+    }
+    try:
+        repos.users.update(u["id"], payload)
+    except Exception as exc:
+        # Eski SQLite kurulumlarında profil sütunları sonradan eklenmiş olabilir.
+        # Şemayı bir kez tamamlayıp kaydetmeyi yeniden dene; Supabase'te ise gerçek
+        # hata kullanıcıya Internal Server Error yerine anlaşılır biçimde gösterilir.
+        if os.getenv("DB_BACKEND", "sqlite").strip().lower() != "supabase":
+            try:
+                from app.database import init_db
+                init_db()
+                repos.users.update(u["id"], payload)
+            except Exception as retry_exc:
+                return page("Profilim", f'<div class="card narrow"><p class="err">Profil bilgileri kaydedilemedi: {escape(str(retry_exc))}</p><a href="/auth/profile"><button>Geri Dön</button></a></div>', 500)
+        else:
+            return page("Profilim", '<div class="card narrow"><p class="err">Profil bilgileri kaydedilemedi. Veritabanındaki kullanıcı profil alanlarının güncel olduğundan emin olun.</p><a href="/auth/profile"><button>Geri Dön</button></a></div>', 500)
+    return page("Profilim", '<div class="card narrow"><p class="ok">Profil bilgileriniz başarıyla kaydedildi.</p>'
                 '<a href="/"><button>Ana Sayfa</button></a></div>')

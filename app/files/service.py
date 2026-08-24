@@ -56,4 +56,13 @@ def save_generated(owner_id,case_id,data,template_name,doc_kind=None,ext=".udf")
         "id":gid,"case_id":case_id,"folder_id":folder_id,"owner_id":owner_id,"original_template":template_name,
         "stored_path":key,"doc_kind":doc_kind,"created_at":now().isoformat(),
     })
+    # Davet mektubu üretildiğinde dosyanın standart "Davet gönder" görevi
+    # otomatik tamamlanır. Diğer belge türlerinin görev akışına dokunulmaz.
+    if case_id and doc_kind == "davet_mektubu":
+        try:
+            from app.modules.tasks.storage import complete_standard_task_by_key
+            complete_standard_task_by_key(owner_id, case_id, "invite", actor_id=owner_id)
+        except Exception:
+            # Belge kaydını görev otomasyonu yüzünden başarısız sayma.
+            pass
     return gid

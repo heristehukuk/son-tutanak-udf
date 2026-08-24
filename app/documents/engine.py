@@ -138,22 +138,109 @@ _RESP_PREFIX_RE = re.compile(r'^(?:karsitaraf|digertaraf)(\d+)(.+)$')
 
 # Kutucuklardan gelmeyen, sistem tarafından otomatik hesaplanan köşeli parantez ifadeleri.
 # Örn: [Bugün()], [tüm taraflar], [taraf sayısı].
+def _recipient(values):
+    r = values.get('_recipient') or {}
+    return r if isinstance(r, dict) else {}
+
+def _recipient_value(values, key):
+    return str(_recipient(values).get(key) or '').strip()
+
+def _davet_kind(values):
+    kind = ' '.join(str(values.get(k) or '') for k in ('dosyaTuru','uyusmazlik','uyusmazlikTuru')).lower()
+    if 'ticari' in kind or 'ticaret' in kind:
+        return 'ticari'
+    if 'iş' in kind or 'işçilik' in kind or 'iş hukuku' in kind:
+        return 'isci'
+    if 'tüketici' in kind:
+        return 'tuketici'
+    if 'kira' in kind:
+        return 'kira'
+    return 'diger'
+
+def _davet_dava_sarti(values, respondents):
+    kind = _davet_kind(values)
+    if kind == 'ticari':
+        return '6102 sayılı Türk Ticaret Kanunun 5/A maddesi uyarınca ticari davalardan, konusu bir miktar paranın ödenmesi olan alacak ve tazminat talepleri hakkında dava açılmadan önce arabulucuya başvurulmuş olması dava şartıdır.'
+    if kind == 'isci':
+        return ('İşçi alacaklarına ait hukuki uyuşmazlığının 6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanunu kapsamında tarafların üzerinde serbestçe tasarruf edebileceği iş ve işlemlerden doğan özel hukuk uyuşmazlığı olduğu anlaşılmaktadır.\n\n'
+                '7036 sayılı İş Mahkemeleri Kanunun 3 üncü maddesi uyarınca kanuna, bireysel veya toplu iş sözleşmesine dayanan işçi veya işveren alacağı ve tazminatı ile işe iade talebiyle açılan davalarda, arabulucuya başvurulmuş olması dava şartıdır.')
+    if kind == 'tuketici':
+        return '6502 sayılı Tüketicinin Korunması Hakkında Kanunun 73/A maddesi uyarınca tüketici mahkemelerinde görülen uyuşmazlıklarda dava açılmadan önce arabulucuya başvurulmuş olması dava şartıdır.'
+    return ''
+
+def _davet_sure(values, respondents):
+    if _davet_kind(values) == 'ticari':
+        return 'Arabulucu, yapılan başvuruyu görevlendirildiği tarihten itibaren altı hafta içinde sonuçlandırır. Bu süre zorunlu hâllerde arabulucu tarafından en fazla iki hafta uzatılabilir.'
+    return 'Arabulucu, yapılan başvuruyu görevlendirildiği tarihten itibaren üç hafta içinde sonuçlandırır. Bu süre zorunlu hâllerde arabulucu tarafından en fazla bir hafta uzatılabilir.'
+
+def _davet_baslik(values, respondents):
+    return 'ARABULUCULUK İLK TOPLANTI DAVET MEKTUBU'
+
+def _davet_katilim(values, respondents):
+    sekil = str(values.get('gorusmeSekli') or 'Telekonferans').strip().lower()
+    tarih = str(values.get('gorusmeTarihi') or '').strip()
+    saat = str(values.get('gorusmeSaati') or '').strip()
+    telefon = str(values.get('arabulucuTelefon') or '').strip()
+    if sekil.startswith('yüz'):
+        adres = str(values.get('gorusmeAdresi') or '').strip()
+        date_phrase = f'{tarih} tarihinde saat {saat}’de' if tarih and saat else (f'{tarih} tarihinde' if tarih else (f'saat {saat}’de' if saat else ''))
+        return f'Sizlerle yapacağımız ilk toplantı, {date_phrase} {adres} adresinde yüz yüze gerçekleştirilecektir.'.replace('  ',' ').strip()
+    date_phrase = f'{tarih} tarihinde saat {saat}’de' if tarih and saat else (f'{tarih} tarihinde' if tarih else (f'saat {saat}’de' if saat else ''))
+    return (f'Sizlerle yapacağımız ilk toplantı, toplantıya katılımı kolay sağlamak adına telekonferans yöntemiyle {date_phrase} gerçekleşecektir. '
+            f'Bunun için toplantı saatinden önce aşağıda yer alan numaradan ({telefon}) benimle iletişime geçmeniz önem arz etmektedir. '
+            'Talebiniz halinde yüz yüze toplantıda yapılabilecektir.').replace('  ',' ').strip()
+
+def _davet_basvurucu_vekil(values, respondents):
+    name = str(values.get('basvurucuAdiSoyadi') or '').strip()
+    proxy = str(values.get('basvurucuVekili') or '').strip()
+    return f'{name} vekili {proxy}' if name and proxy else name
+
+def _davet_uyusmazlik_aciklama(values, respondents):
+    applicant = str(values.get('basvurucuAdiSoyadi') or '').strip()
+    others = [str(r.get('name') or '').strip() for r in respondents if str(r.get('name') or '').strip()]
+    subject = str(values.get('uyusmazlik') or values.get('dosyaTuru') or '').strip()
+    if not others:
+        return f'{applicant} ile ilgili {subject} konusundaki uyuşmazlığın arabuluculuk yoluyla çözümlenmesi amaçlanmaktadır.'.strip()
+    return f'{applicant} ile {join_turkish_list(others)} arasındaki {subject} konusundaki uyuşmazlığın arabuluculuk yoluyla çözümlenmesi amaçlanmaktadır.'.strip()
+
 COMPUTED_BRACKETS = {
     'bugun': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
     'bugunuuntarihi': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
     'tarih': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
     'gununtarihi': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
-    # Başvurucu hariç, tüm karşı tarafların adları sırasıyla ve Türkçe liste biçiminde ("A, B ve C").
     'tumtaraflar': lambda values,respondents: join_turkish_list([(r.get('name') or '').strip() for r in respondents]),
-    # Başvurucu dahil TOPLAM taraf sayısı, rakam + Türkçe yazıyla: "3 (üç)".
     'tarafsayisi': lambda values,respondents: (lambda t: f"{t} ({turkce_sayi_yazi(t)})")(1+len(respondents)),
+    'dosyaturunegorebaslik': _davet_baslik,
+    'dosyaturunegoredavasartiparagrafi': _davet_dava_sarti,
+    'dosyaturunegoresureparagrafi': _davet_sure,
+    'telekonferansyuzyuze': _davet_katilim,
+    'telekonferansyuzyuzetoplantiparagrafi': _davet_katilim,
+    'basvurucuvekili': _davet_basvurucu_vekil,
+    'uyusmazlikkonusununaciklamasi': _davet_uyusmazlik_aciklama,
+    'muhatapadiunvani': lambda values,respondents: _recipient_value(values,'name'),
+    'muhatapadres': lambda values,respondents: _recipient_value(values,'address'),
+    'muhatapadresi': lambda values,respondents: _recipient_value(values,'address'),
+    'arabuluculukburosu': lambda values,respondents: '',
+    'muhatapvekili': lambda values,respondents: _recipient_value(values,'proxy'),
+    'muhataptel': lambda values,respondents: _recipient_value(values,'phone'),
+    'muhatape posta': lambda values,respondents: _recipient_value(values,'email'),
+    'muhatapeposta': lambda values,respondents: _recipient_value(values,'email'),
 }
 COMPUTED_LABELS = {
-    'bugun': "Bugünün Tarihi (otomatik doldurulur)",
-    'tarih': "Bugünün Tarihi (otomatik doldurulur)",
+    'bugun': "Bugünün Tarihi (otomatik doldurulur)", 'tarih': "Bugünün Tarihi (otomatik doldurulur)",
     'tumtaraflar': "Tüm Karşı Tarafların Adları (otomatik, başvurucu hariç)",
     'tarafsayisi': "Toplam Taraf Sayısı (otomatik, rakam + yazıyla)",
+    'dosyaturunegorebaslik': "Davet Mektubu Başlığı (dosya türüne göre)",
+    'dosyaturunegoredavasartiparagrafi': "Dava şartı paragrafı (dosya türüne göre)",
+    'dosyaturunegoresureparagrafi': "Arabuluculuk süresi paragrafı (dosya türüne göre)",
+    'telekonferansyuzyuze': "Toplantı yöntemi paragrafı",
+    'basvurucuvekili': "Başvurucu ve varsa vekili",
+    'uyusmazlikkonusununaciklamasi': "Uyuşmazlık açıklaması",
 }
+
+# Kullanıcı şablonlarındaki boşluk, slash ve Türkçe karakter farklarını computed alanlarda da tolere et.
+COMPUTED_BRACKETS = {normalize_bracket_text(k): v for k, v in COMPUTED_BRACKETS.items()}
+COMPUTED_LABELS = {normalize_bracket_text(k): v for k, v in COMPUTED_LABELS.items()}
 
 def resolve_bracket_token(raw_text):
     """Köşeli parantez içindeki metni ('dosya no', 'karşı taraf 1 adı', 'Bugün()' vb.) çözer.
@@ -1066,9 +1153,6 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     else: type_note='Taraf türü numara bilgisine göre otomatik belirlenecek.'
     applicant_keys=['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta','basvurucuTcKimlik','basvurucuVergiNo']
     applicant_inner=(f'<label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}"><label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}"><p class="hint">{escape(type_note)}</p>'+make_fields(['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']))
-    cards+=section_card('Dosya Bilgileri',make_fields(['basvuruNo','dosyaNo']),filled_count(['basvuruNo','dosyaNo']),2,True)
-    arb_keys=['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']
-    cards+=section_card('Arabulucu Bilgileri',make_fields(arb_keys),filled_count(arb_keys),len(arb_keys),True)
     cards+=section_card('Başvurucu Bilgileri',applicant_inner,filled_count(applicant_keys),len(applicant_keys),False)
     for title,ks in groups: cards+=section_card(title,make_fields(ks),filled_count(ks),len(ks),False)
 
