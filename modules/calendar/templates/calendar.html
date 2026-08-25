@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dosya Takvimi</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;color:#1f2937}
+.container{max-width:1250px;margin:30px auto;padding:0 20px}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;gap:15px}
+h1{margin:0;font-size:28px}.back{text-decoration:none;color:#2563eb;font-weight:600}
+.card{background:#fff;border-radius:14px;padding:22px;margin-bottom:22px;box-shadow:0 4px 18px rgba(0,0,0,.06)}
+.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.field{display:flex;flex-direction:column;gap:7px}.field.full{grid-column:1/-1}
+label{font-weight:600}
+input,select{width:100%;padding:11px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px}
+button{border:0;border-radius:8px;padding:11px 18px;cursor:pointer;font-weight:600;font-size:15px}
+.primary{background:#2563eb;color:#fff}.secondary{background:#e5e7eb;color:#111827}
+.deadline-info{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:15px;margin-top:15px}
+.deadline-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e5e7eb}
+.deadline-row:last-child{border-bottom:0}.normal{color:#d97706;font-weight:700}.extended{color:#dc2626;font-weight:700}
+.calendar-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}
+.month-title{font-size:22px;font-weight:700}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);border-top:1px solid #e5e7eb;border-left:1px solid #e5e7eb}
+.weekday{background:#f8fafc;padding:10px;text-align:center;font-weight:700;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
+.day{min-height:115px;padding:8px;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;background:#fff}
+.day.empty{background:#f9fafb}.day-number{font-weight:700;margin-bottom:6px}
+.event{padding:6px;border-radius:6px;margin-top:5px;font-size:12px;line-height:1.3;cursor:pointer}
+.event.normal-event{background:#fef3c7;color:#92400e}.event.extended-event{background:#fee2e2;color:#991b1b}
+.warning-item{padding:13px;border-bottom:1px solid #e5e7eb}.warning-item:last-child{border-bottom:0}
+.warning-title{font-weight:700}.warning-date{margin-top:4px;font-size:14px}
+.empty-message{color:#6b7280;padding:15px 0}.success{padding:13px;background:#dcfce7;color:#166534;border-radius:8px;margin-top:15px}
+.error{padding:13px;background:#fee2e2;color:#991b1b;border-radius:8px;margin-top:15px}
+@media(max-width:800px){.form-grid{grid-template-columns:1fr}.calendar-grid{overflow-x:auto;grid-template-columns:repeat(7,minmax(120px,1fr))}.calendar-header{flex-direction:column;align-items:flex-start;gap:10px}}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<div><h1>📅 Dosya Takvimi</h1><p>Arabuluculuk dosyalarının sürelerini takip edin.</p></div>
+<a class="back" href="/">← Ana Sayfaya Dön</a>
+</div>
+
+<div class="card">
+<h2>Takvime Dosya Ekle</h2>
+<div class="form-grid">
+<div class="field"><label>Dosya No</label><input id="caseNo" type="text" placeholder="Örn. 2026/12345"></div>
+<div class="field"><label>Başvurucu Adı Soyadı / Ünvanı</label><input id="applicantName" type="text" placeholder="Başvurucu"></div>
+<div class="field"><label>Dosya Türü</label><input id="fileType" type="text" placeholder="Örn. Ticari Dava Şartı Arabuluculuk"></div>
+<div class="field"><label>Süreç Başlangıç Tarihi</label><input id="startDate" type="date"></div>
+<div class="field full"><button class="primary" onclick="calculateDeadline()">Süreleri Hesapla</button></div>
+</div>
+
+<div id="deadlineInfo" class="deadline-info" style="display:none">
+<div class="deadline-row"><span>Dosya türü</span><strong id="typeResult"></strong></div>
+<div class="deadline-row"><span>Normal süre</span><strong id="normalWeeks"></strong></div>
+<div class="deadline-row"><span>Normal süre sonu</span><strong id="normalDate" class="normal"></strong></div>
+<div class="deadline-row"><span>Ek süre</span><strong id="extraWeeks"></strong></div>
+<div class="deadline-row"><span>Ek süre sonu</span><strong id="extendedDate" class="extended"></strong></div>
+<div style="margin-top:15px"><button class="primary" onclick="addCase()">📅 Takvime Kaydet</button></div>
+</div>
+<div id="message"></div>
+</div>
+
+<div class="card"><h2>⚠️ Yaklaşan Süreler</h2><div id="warnings">Yükleniyor...</div></div>
+
+<div class="card">
+<div class="calendar-header">
+<button class="secondary" onclick="changeMonth(-1)">← Önceki</button>
+<div id="monthTitle" class="month-title"></div>
+<button class="secondary" onclick="changeMonth(1)">Sonraki →</button>
+</div>
+<div class="calendar-grid">
+<div class="weekday">Pzt</div><div class="weekday">Sal</div><div class="weekday">Çar</div>
+<div class="weekday">Per</div><div class="weekday">Cum</div><div class="weekday">Cmt</div><div class="weekday">Paz</div>
+</div>
+<div id="calendar" class="calendar-grid"></div>
+</div>
+</div>
+
+<script>
+let events=[];
+let currentMonth=new Date();
+const monthNames=["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+
+function formatDate(value){
+    const date=new Date(value+"T00:00:00");
+    return date.toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",year:"numeric"});
+}
+function formatLocalDate(date){
+    return date.toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",year:"numeric"});
+}
+
+function calculateDeadline(){
+    const caseNo=document.getElementById("caseNo").value.trim();
+    const applicant=document.getElementById("applicantName").value.trim();
+    const fileType=document.getElementById("fileType").value.trim();
+    const startDate=document.getElementById("startDate").value;
+
+    if(!caseNo||!applicant||!fileType||!startDate){
+        showMessage("Lütfen bütün alanları doldurun.",true); return;
+    }
+
+    const start=new Date(startDate+"T00:00:00");
+    const commercial=fileType.toLocaleLowerCase("tr-TR").includes("ticari");
+    const normalWeeks=commercial?6:3;
+    const extraWeeks=commercial?8:4;
+
+    const normal=new Date(start);
+    normal.setDate(normal.getDate()+normalWeeks*7);
+    const extended=new Date(start);
+    extended.setDate(extended.getDate()+extraWeeks*7);
+
+    document.getElementById("typeResult").textContent=commercial?"Ticari":"Ticari dışı";
+    document.getElementById("normalWeeks").textContent=normalWeeks+" hafta";
+    document.getElementById("extraWeeks").textContent=extraWeeks+" hafta";
+    document.getElementById("normalDate").textContent=formatLocalDate(normal);
+    document.getElementById("extendedDate").textContent=formatLocalDate(extended);
+    document.getElementById("deadlineInfo").style.display="block";
+    clearMessage();
+}
+
+async function addCase(){
+    const params=new URLSearchParams();
+    params.set("case_no",document.getElementById("caseNo").value.trim());
+    params.set("applicant_name",document.getElementById("applicantName").value.trim());
+    params.set("file_type",document.getElementById("fileType").value.trim());
+    params.set("start_date",document.getElementById("startDate").value);
+    if(window.editorCaseId) params.set("case_id",window.editorCaseId);
+    if(window.editorCaseData) params.set("case_data",JSON.stringify(window.editorCaseData));
+
+    try{
+        const response=await fetch("/calendar/calculate",{
+            method:"POST",
+            headers:{"Content-Type":"application/x-www-form-urlencoded"},
+            body:params
+        });
+        const data=await response.json();
+        if(!response.ok){
+            const detail=Array.isArray(data.detail)
+                ?data.detail.map(x=>x.msg||JSON.stringify(x)).join(", ")
+                :(data.detail||"Dosya kaydedilemedi.");
+            showMessage(detail,true); return;
+        }
+        showMessage("Dosya takvime başarıyla eklendi.",false);
+        await loadEvents(); await loadWarnings(); renderCalendar();
+    }catch(error){ showMessage("Sunucuya bağlanırken hata oluştu.",true); }
+}
+
+async function loadEvents(){
+    try{ const response=await fetch("/calendar/events"); events=await response.json(); }
+    catch(error){ events=[]; }
+}
+
+async function loadWarnings(){
+    const container=document.getElementById("warnings");
+    try{
+        const response=await fetch("/calendar/warnings");
+        const warnings=await response.json();
+        if(!warnings.length){
+            container.innerHTML='<div class="empty-message">Yaklaşan veya gecikmiş süre bulunmuyor.</div>'; return;
+        }
+        container.innerHTML=warnings.map(event=>{
+            let text=event.warning_level==="expired"?"⚠️ Süresi geçmiş":
+                     event.warning_level==="today"?"🔴 Süre bugün doluyor":
+                     "🟠 "+event.remaining_days+" gün kaldı";
+            return `<div class="warning-item"><div class="warning-title">${escapeHtml(event.title)}</div>
+                    <div class="warning-date">${formatDate(event.event_date)} — ${text}</div></div>`;
+        }).join("");
+    }catch(error){
+        container.innerHTML='<div class="empty-message">Uyarılar yüklenemedi.</div>';
+    }
+}
+
+function renderCalendar(){
+    const calendar=document.getElementById("calendar");
+    const year=currentMonth.getFullYear(), month=currentMonth.getMonth();
+    document.getElementById("monthTitle").textContent=monthNames[month]+" "+year;
+    calendar.innerHTML="";
+    let firstDay=new Date(year,month,1).getDay();
+    firstDay=firstDay===0?6:firstDay-1;
+    const daysInMonth=new Date(year,month+1,0).getDate();
+
+    for(let i=0;i<firstDay;i++){
+        const empty=document.createElement("div"); empty.className="day empty"; calendar.appendChild(empty);
+    }
+    for(let day=1;day<=daysInMonth;day++){
+        const cell=document.createElement("div"); cell.className="day";
+        const number=document.createElement("div"); number.className="day-number"; number.textContent=day; cell.appendChild(number);
+        const dateString=year+"-"+String(month+1).padStart(2,"0")+"-"+String(day).padStart(2,"0");
+        events.filter(event=>event.event_date===dateString).forEach(event=>{
+            const element=document.createElement("div");
+            element.className="event "+(event.event_type==="normal_deadline"?"normal-event":"extended-event");
+            element.innerHTML="<strong>"+escapeHtml(event.case_no)+"</strong><br>"+escapeHtml(event.applicant_name);
+            element.title=event.title;
+            cell.appendChild(element);
+        });
+        calendar.appendChild(cell);
+    }
+}
+
+function changeMonth(direction){ currentMonth.setMonth(currentMonth.getMonth()+direction); renderCalendar(); }
+
+function showMessage(message,error){
+    const container=document.getElementById("message");
+    container.className=error?"error":"success";
+    container.textContent=message;
+}
+function clearMessage(){const container=document.getElementById("message");container.className="";container.textContent="";}
+function escapeHtml(value){
+    return String(value).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+}
+
+/* Editör ekranından gelen bilgileri otomatik doldurur. */
+function fillFromEditor(){
+    const params=new URLSearchParams(window.location.search);
+    const caseNo=params.get("case_no");
+    const applicant=params.get("applicant_name");
+    const fileType=params.get("file_type");
+    const startDate=params.get("start_date");
+    window.editorCaseId=params.get("case_id")||"";
+    try{window.editorCaseData=JSON.parse(params.get("case_data")||"{}");}catch(e){window.editorCaseData={};}
+
+    if(caseNo) document.getElementById("caseNo").value=caseNo;
+    if(applicant) document.getElementById("applicantName").value=applicant;
+    if(fileType) document.getElementById("fileType").value=fileType;
+    if(startDate) document.getElementById("startDate").value=startDate;
+
+    if(caseNo&&applicant&&fileType&&startDate){ calculateDeadline(); }
+}
+
+async function initCalendar(){
+    fillFromEditor();
+    await loadEvents();
+    await loadWarnings();
+    renderCalendar();
+}
+initCalendar();
+</script>
+</body>
+</html>
