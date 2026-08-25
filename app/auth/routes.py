@@ -90,19 +90,14 @@ async def update_profile(request: Request, mediator_name: str = Form(""), mediat
         "mediator_email": mediator_email.strip() or None,
     }
     try:
-        repos.users.update(u["id"], payload)
-    except Exception as exc:
-        # Eski SQLite kurulumlarında profil sütunları sonradan eklenmiş olabilir.
-        # Şemayı bir kez tamamlayıp kaydetmeyi yeniden dene; Supabase'te ise gerçek
-        # hata kullanıcıya Internal Server Error yerine anlaşılır biçimde gösterilir.
+        # SQLite'ta eski veritabanları için idempotent şema tamamlaması startup'ta yapılır.
+        # Burada ayrıca bir kez init_db çağırmak, profil kaydını eski kurulumlarda da güvenceye alır.
         if os.getenv("DB_BACKEND", "sqlite").strip().lower() != "supabase":
-            try:
-                from app.database import init_db
-                init_db()
-                repos.users.update(u["id"], payload)
-            except Exception as retry_exc:
-                return page("Profilim", f'<div class="card narrow"><p class="err">Profil bilgileri kaydedilemedi: {escape(str(retry_exc))}</p><a href="/auth/profile"><button>Geri Dön</button></a></div>', 500)
-        else:
-            return page("Profilim", '<div class="card narrow"><p class="err">Profil bilgileri kaydedilemedi. Veritabanındaki kullanıcı profil alanlarının güncel olduğundan emin olun.</p><a href="/auth/profile"><button>Geri Dön</button></a></div>', 500)
+            from app.database import init_db
+            init_db()
+        repos.users.update(u["id"], payload)
+    except Exception:
+        # Teknik/veritabanı ayrıntılarını kullanıcıya göstermiyoruz.
+        return page("Profilim", '<div class="card narrow"><p class="err">Profil bilgileriniz kaydedilemedi. Lütfen tekrar deneyin.</p><a href="/auth/profile"><button>Geri Dön</button></a></div>', 500)
     return page("Profilim", '<div class="card narrow"><p class="ok">Profil bilgileriniz başarıyla kaydedildi.</p>'
                 '<a href="/"><button>Ana Sayfa</button></a></div>')

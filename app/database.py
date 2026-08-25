@@ -168,6 +168,24 @@ def init_db():
             target_id TEXT, details TEXT, created_at TEXT NOT NULL
         );
         """)
+
+        # Eski V28/önceki kurulumlarda users tablosu mevcut olup profil sütunları eksik olabilir.
+        # CREATE TABLE IF NOT EXISTS mevcut tabloyu güncellemediği için sütunları idempotent
+        # biçimde tamamlıyoruz.
+        user_columns = {row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()}
+        profile_columns = {
+            "iban": "TEXT",
+            "mediator_no": "INTEGER",
+            "mediator_name": "TEXT",
+            "mediator_tc": "TEXT",
+            "mediator_registry": "TEXT",
+            "mediator_address": "TEXT",
+            "mediator_phone": "TEXT",
+            "mediator_email": "TEXT",
+        }
+        for column, sql_type in profile_columns.items():
+            if column not in user_columns:
+                c.execute(f"ALTER TABLE users ADD COLUMN {column} {sql_type}")
         custom_cols = [r["name"] for r in c.execute("PRAGMA table_info(custom_templates)").fetchall()]
         if "doc_kind" not in custom_cols:
             c.execute("ALTER TABLE custom_templates ADD COLUMN doc_kind TEXT DEFAULT 'diger'")

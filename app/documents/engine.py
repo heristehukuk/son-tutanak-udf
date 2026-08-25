@@ -146,7 +146,11 @@ def _recipient_value(values, key):
     return str(_recipient(values).get(key) or '').strip()
 
 def _davet_kind(values):
-    kind = ' '.join(str(values.get(k) or '') for k in ('dosyaTuru','uyusmazlik','uyusmazlikTuru')).lower()
+    # Davet Mektubu türünü DOSYA TÜRÜ belirler. Bilgi Havuzu'ndaki eski/ayrı
+    # "Uyuşmazlık" veya "Uyuşmazlık Türü" değeri farklı bir tür içeriyorsa
+    # dosya türünün önüne geçmemelidir.
+    primary = str(values.get('dosyaTuru') or '').strip().lower().replace('i̇','i')
+    kind = primary or ' '.join(str(values.get(k) or '') for k in ('uyusmazlik','uyusmazlikTuru')).lower().replace('i̇','i')
     if 'ticari' in kind or 'ticaret' in kind:
         return 'ticari'
     if 'iş' in kind or 'işçilik' in kind or 'iş hukuku' in kind:
