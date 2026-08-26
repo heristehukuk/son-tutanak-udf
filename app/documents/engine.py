@@ -12,6 +12,7 @@ from datetime import date
 FIELDS=[
 ('basvuruNo','Başvuru No'),('dosyaNo','Dosya No'),
 ('arabulucuAdi','Arabulucu Adı'),('arabulucuTc','Arabulucu T.C. Kimlik No'),
+('arabuluculukBurosu','Arabuluculuk Bürosu (Davet Mektubu\'nda "... [Arabuluculuk Bürosu] Arabuluculuk Bürosuna..." şeklinde geçer - sadece il/kısa ad yazın, ör. "Ankara")'),
 ('arabulucuSicil','Arabulucu Sicil No'),('arabulucuAdres','Arabulucu Adres'),('arabulucuTelefon','Arabulucu Telefon'),('arabulucuEposta','Arabulucu E-posta'),
 ('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
@@ -49,6 +50,7 @@ FIELD_SYNONYMS = {
     'arabulucutc':'arabulucuTc','arabulucutckimlikno':'arabulucuTc','arabulucutckimliknumarasi':'arabulucuTc','arbtc':'arabulucuTc','arbutc':'arabulucuTc',
     'arabulucusicil':'arabulucuSicil','arabulucusicilno':'arabulucuSicil','arabulucusicilnumarasi':'arabulucuSicil','arbsicil':'arabulucuSicil','arbsicilno':'arabulucuSicil','arbsicilnumarasi':'arabulucuSicil',
     'arabulucuadres':'arabulucuAdres','arabulucubüroadresi':'arabulucuAdres','arabulucuburoadresi':'arabulucuAdres',
+    'arabuluculukburosu':'arabuluculukBurosu','arabuluculukofisi':'arabuluculukBurosu','burosu':'arabuluculukBurosu','arabulucubürosu':'arabuluculukBurosu',
     'arbtel':'arabulucuTelefon','arabulucutelefon':'arabulucuTelefon','arabulucutelefonno':'arabulucuTelefon','arabulucutelefonnumarasi':'arabulucuTelefon','arabulucuceptelefonu':'arabulucuTelefon','arabulucuceptel':'arabulucuTelefon','arbtelefon':'arabulucuTelefon','arbtelefonno':'arabulucuTelefon','arbtelefonnumarasi':'arabulucuTelefon','arbceptelefonu':'arabulucuTelefon','arbceptel':'arabulucuTelefon',
     'arbeposta':'arabulucuEposta','arabulucueposta':'arabulucuEposta','arabulucuepostaadresi':'arabulucuEposta','arabulucuemail':'arabulucuEposta','arbemail':'arabulucuEposta','arbepostaadresi':'arabulucuEposta',
     'basvurucuadisoyadi':'basvurucuAdiSoyadi','basvurucuadi':'basvurucuAdiSoyadi','basvurucu':'basvurucuAdiSoyadi',
@@ -224,7 +226,6 @@ COMPUTED_BRACKETS = {
     'muhatapadiunvani': lambda values,respondents: _recipient_value(values,'name'),
     'muhatapadres': lambda values,respondents: _recipient_value(values,'address'),
     'muhatapadresi': lambda values,respondents: _recipient_value(values,'address'),
-    'arabuluculukburosu': lambda values,respondents: '',
     'muhatapvekili': lambda values,respondents: _recipient_value(values,'proxy'),
     'muhataptel': lambda values,respondents: _recipient_value(values,'phone'),
     'muhatape posta': lambda values,respondents: _recipient_value(values,'email'),
@@ -1121,7 +1122,7 @@ def fill_general(text,values):
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None):
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
-            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']),
+            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta','arabuluculukBurosu']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
             ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi']),
             ('Harcama Pusulası',['daireBilgisi'])]
