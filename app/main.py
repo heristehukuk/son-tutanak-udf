@@ -1,6 +1,6 @@
 import os
 
-import io, os, re, json, urllib.parse, zipfile
+import io, os, re, json, urllib.parse, zipfile, asyncio
 from uuid import uuid4
 import pytesseract
 from pathlib import Path
@@ -150,7 +150,7 @@ async def edit(request:Request,file:UploadFile=File(...)):
     plan=get_plan(u["plan_id"]); max_mb=plan["limits"].get("file.max_mb")
     if max_mb and len(data)>max_mb*1024*1024:return HTMLResponse(f"Tek dosya sınırı {max_mb} MB.",413)
     try:
-        text,kind=extract_any_source(file.filename or "",data)
+        text,kind=await asyncio.to_thread(extract_any_source, file.filename or "",data)
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         values,respondents=extract(text)
@@ -221,7 +221,7 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
     if not u:return RedirectResponse("/auth/login",303)
     form=await request.form(); values,respondents,locked,locked_resp=form_state(form); data=await merge_file.read()
     try:
-        text,kind=extract_any_source(merge_file.filename or "",data); nv,nr=extract(text); plan=get_plan(u["plan_id"])
+        text,kind=await asyncio.to_thread(extract_any_source, merge_file.filename or "",data); nv,nr=extract(text); plan=get_plan(u["plan_id"])
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         base_values=apply_mediator_profile_defaults(u, values)
