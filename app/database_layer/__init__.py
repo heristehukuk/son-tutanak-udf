@@ -30,6 +30,7 @@ class Repositories:
                 SupabasePlanRepository, SupabaseUsageRepository, SupabaseCalendarEventRepository,
                 SupabaseTaskRepository, SupabaseTaskTemplateRepository, SupabaseTaskHistoryRepository,
                 SupabasePermissionRepository, SupabaseCounterRepository, SupabaseFolderRepository, SupabasePendingMergeRepository,
+                SupabaseSurveyRepository, SupabaseSurveyQuestionRepository, SupabaseSurveyAnswerRepository,
             )
             self.users = SupabaseUserRepository()
             self.sessions = SupabaseSessionRepository()
@@ -50,6 +51,9 @@ class Repositories:
             self.counters = SupabaseCounterRepository()
             self.folders = SupabaseFolderRepository()
             self.pending_merges = SupabasePendingMergeRepository()
+            self.surveys = SupabaseSurveyRepository()
+            self.survey_questions = SupabaseSurveyQuestionRepository()
+            self.survey_answers = SupabaseSurveyAnswerRepository()
         else:
             from app.database_layer.sqlite_repository import (
                 SQLiteUserRepository, SQLiteSessionRepository, SQLiteCaseRepository,
@@ -58,6 +62,7 @@ class Repositories:
                 SQLitePlanRepository, SQLiteUsageRepository, SQLiteCalendarEventRepository,
                 SQLiteTaskRepository, SQLiteTaskTemplateRepository, SQLiteTaskHistoryRepository,
                 SQLitePermissionRepository, SQLiteCounterRepository, SQLiteFolderRepository, SQLitePendingMergeRepository,
+                SQLiteSurveyRepository, SQLiteSurveyQuestionRepository, SQLiteSurveyAnswerRepository,
             )
             self.users = SQLiteUserRepository()
             self.sessions = SQLiteSessionRepository()
@@ -78,6 +83,9 @@ class Repositories:
             self.counters = SQLiteCounterRepository()
             self.folders = SQLiteFolderRepository()
             self.pending_merges = SQLitePendingMergeRepository()
+            self.surveys = SQLiteSurveyRepository()
+            self.survey_questions = SQLiteSurveyQuestionRepository()
+            self.survey_answers = SQLiteSurveyAnswerRepository()
 
 
 # Tek, paylaşılan örnek (singleton).

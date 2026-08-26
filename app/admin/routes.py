@@ -128,6 +128,8 @@ async def dashboard(request:Request):
 
     folder_html='<h2>📁 Klasör Yönetimi</h2><p><a href="/folders/admin"><button>Klasörleri Yönet</button></a></p>' if u.get('is_super_admin') else ''
 
+    survey_html='<h2>📊 Anket Yönetimi</h2><p><a href="/surveys/admin"><button>Anketleri Yönet</button></a></p>' if can.get("surveys.create") else ''
+
     pending_rows = repos.pending_merges.list_all() if can.get("files.view") else []
     pending_html = '<h2>⚠️ Bekleyen Çakışmalı Belgeler</h2>' + (''.join(
         f'<div class="card"><b>{escape(r.get("original_filename") or "Belge")}</b>'
@@ -147,7 +149,7 @@ async def dashboard(request:Request):
           (("<h2>Yüklenen Belgeler</h2>"+"".join(ds)) if can["files.view"] else "")+
           pending_html+"<h2>Kullanıcı Şablonları (Tümü)</h2>"+("".join(ts) or "<p>Henüz özel şablon yok.</p>")+
           "<h2>Arabuluculuk Ücret Tarifesi</h2><p><a href=\"/admin/tariffs\"><button>Tarifeyi Yönet</button></a></p>"+
-          audit_html+trash_html+folder_html+backup_html)
+          audit_html+trash_html+folder_html+survey_html+backup_html)
     return page("Admin",body)
 
 
