@@ -344,6 +344,9 @@ def _safe_download_name(value, fallback="davet_mektubu"):
 def _build_davet_outputs(data, values, respondents, u):
     """Başvurucu + her karşı taraf için ayrı davet UDF'si üretir."""
     xml, old, files = read_udf(data)
+    values = dict(values)
+    if not str(values.get('arabuluculukBurosu') or '').strip():
+        values['arabuluculukBurosu'] = 'Ankara'
     applicant={
         'name': values.get('basvurucuAdiSoyadi',''), 'address': values.get('basvurucuAdres',''),
         'proxy': values.get('basvurucuVekili',''), 'phone': values.get('basvurucuTelefon',''),
