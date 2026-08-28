@@ -128,23 +128,18 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_users_mediator_no ON users(mediator_no);
         CREATE INDEX IF NOT EXISTS idx_cases_registry_no ON cases(registry_no);
         CREATE TABLE IF NOT EXISTS surveys (
-            id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
-            created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+            id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS survey_questions (
             id TEXT PRIMARY KEY, survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
-            question TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text',
-            options_json TEXT, sort_order INTEGER NOT NULL DEFAULT 0
+            question TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text'
         );
         CREATE TABLE IF NOT EXISTS survey_answers (
             id TEXT PRIMARY KEY, survey_id TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
             question_id TEXT NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
             user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            answer TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT
+            answer TEXT NOT NULL, created_at TEXT NOT NULL
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_answers_unique ON survey_answers(question_id, user_id);
-        CREATE INDEX IF NOT EXISTS idx_survey_questions_survey ON survey_questions(survey_id, sort_order);
-        CREATE INDEX IF NOT EXISTS idx_survey_answers_survey_user ON survey_answers(survey_id, user_id);
         CREATE TABLE IF NOT EXISTS custom_templates (
             id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL, is_shared INTEGER NOT NULL DEFAULT 0,
@@ -211,19 +206,3 @@ def init_db():
         for col in ("mediator_name","mediator_tc","mediator_registry","mediator_address","mediator_phone","mediator_email"):
             if col not in user_cols3:
                 c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
-        # NOT: Anket modülü ilk sürümde sadece iskelet tablolardı (options_json/sort_order/
-        # created_by/updated_at yoktu). Var olan veritabanlarını bozmadan tamamlıyoruz.
-        survey_cols = [r["name"] for r in c.execute("PRAGMA table_info(surveys)").fetchall()]
-        if "created_by" not in survey_cols:
-            c.execute("ALTER TABLE surveys ADD COLUMN created_by TEXT REFERENCES users(id) ON DELETE SET NULL")
-        sq_cols = [r["name"] for r in c.execute("PRAGMA table_info(survey_questions)").fetchall()]
-        if "options_json" not in sq_cols:
-            c.execute("ALTER TABLE survey_questions ADD COLUMN options_json TEXT")
-        if "sort_order" not in sq_cols:
-            c.execute("ALTER TABLE survey_questions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
-        sa_cols = [r["name"] for r in c.execute("PRAGMA table_info(survey_answers)").fetchall()]
-        if "updated_at" not in sa_cols:
-            c.execute("ALTER TABLE survey_answers ADD COLUMN updated_at TEXT")
-        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_answers_unique ON survey_answers(question_id, user_id)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_survey_questions_survey ON survey_questions(survey_id, sort_order)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_survey_answers_survey_user ON survey_answers(survey_id, user_id)")

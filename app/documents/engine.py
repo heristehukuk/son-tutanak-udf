@@ -12,7 +12,6 @@ from datetime import date
 FIELDS=[
 ('basvuruNo','Başvuru No'),('dosyaNo','Dosya No'),
 ('arabulucuAdi','Arabulucu Adı'),('arabulucuTc','Arabulucu T.C. Kimlik No'),
-('arabuluculukBurosu','Arabuluculuk Bürosu (Davet Mektubu\'nda "... [Arabuluculuk Bürosu] Arabuluculuk Bürosuna..." şeklinde geçer - sadece il/kısa ad yazın, ör. "Ankara")'),
 ('arabulucuSicil','Arabulucu Sicil No'),('arabulucuAdres','Arabulucu Adres'),('arabulucuTelefon','Arabulucu Telefon'),('arabulucuEposta','Arabulucu E-posta'),
 ('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
 ('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
@@ -21,7 +20,8 @@ FIELDS=[
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
 ('daireBilgisi','Dairesi (Harcama Pusulası için, örn. ANKARA CUMHURİYET BAŞSAVCILIĞI)'),
-('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi')]
+('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi'),
+('arabuluculukBurosu','Arabuluculuk Bürosu (şehir/ad)')]
 LABELS=dict(FIELDS)
 LABELS['_userIban']='Arabulucu IBAN (kullanıcı profilinden, otomatik)'
 RESP_FIELDS=['type','tc','tax','name','address','proxy','phone','email']
@@ -50,7 +50,6 @@ FIELD_SYNONYMS = {
     'arabulucutc':'arabulucuTc','arabulucutckimlikno':'arabulucuTc','arabulucutckimliknumarasi':'arabulucuTc','arbtc':'arabulucuTc','arbutc':'arabulucuTc',
     'arabulucusicil':'arabulucuSicil','arabulucusicilno':'arabulucuSicil','arabulucusicilnumarasi':'arabulucuSicil','arbsicil':'arabulucuSicil','arbsicilno':'arabulucuSicil','arbsicilnumarasi':'arabulucuSicil',
     'arabulucuadres':'arabulucuAdres','arabulucubüroadresi':'arabulucuAdres','arabulucuburoadresi':'arabulucuAdres',
-    'arabuluculukburosu':'arabuluculukBurosu','arabuluculukofisi':'arabuluculukBurosu','burosu':'arabuluculukBurosu','arabulucubürosu':'arabuluculukBurosu',
     'arbtel':'arabulucuTelefon','arabulucutelefon':'arabulucuTelefon','arabulucutelefonno':'arabulucuTelefon','arabulucutelefonnumarasi':'arabulucuTelefon','arabulucuceptelefonu':'arabulucuTelefon','arabulucuceptel':'arabulucuTelefon','arbtelefon':'arabulucuTelefon','arbtelefonno':'arabulucuTelefon','arbtelefonnumarasi':'arabulucuTelefon','arbceptelefonu':'arabulucuTelefon','arbceptel':'arabulucuTelefon',
     'arbeposta':'arabulucuEposta','arabulucueposta':'arabulucuEposta','arabulucuepostaadresi':'arabulucuEposta','arabulucuemail':'arabulucuEposta','arbemail':'arabulucuEposta','arbepostaadresi':'arabulucuEposta',
     'basvurucuadisoyadi':'basvurucuAdiSoyadi','basvurucuadi':'basvurucuAdiSoyadi','basvurucu':'basvurucuAdiSoyadi',
@@ -73,6 +72,7 @@ FIELD_SYNONYMS = {
     'gorusmetarihi':'gorusmeTarihi',
     'gorusmesaati':'gorusmeSaati',
     'gorusmeadresi':'gorusmeAdresi',
+    'arabuluculukburosu':'arabuluculukBurosu','arabuluculukburosuadi':'arabuluculukBurosu',
     'iban':'_userIban',
 }
 FIELD_SYNONYMS = {normalize_bracket_text(k):v for k,v in FIELD_SYNONYMS.items()}
@@ -148,20 +148,36 @@ def _recipient_value(values, key):
     return str(_recipient(values).get(key) or '').strip()
 
 def _davet_kind(values):
-    # Davet Mektubu türünü DOSYA TÜRÜ belirler. Bilgi Havuzu'ndaki eski/ayrı
-    # "Uyuşmazlık" veya "Uyuşmazlık Türü" değeri farklı bir tür içeriyorsa
-    # dosya türünün önüne geçmemelidir.
-    primary = str(values.get('dosyaTuru') or '').strip().lower().replace('i̇','i')
-    kind = primary or ' '.join(str(values.get(k) or '') for k in ('uyusmazlik','uyusmazlikTuru')).lower().replace('i̇','i')
+    """Dosya türü metnini kategoriye ayırır. OCR/yazım farkları (Türkçe
+    karaktersiz girilmiş olması gibi) yüzünden kategori kaçırılmasın diye
+    ASCII'ye çevrilmiş (ş->s, ü->u, ı->i vb.) hâliyle karşılaştırılır."""
+    kind_raw = ' '.join(str(values.get(k) or '') for k in ('dosyaTuru','uyusmazlik','uyusmazlikTuru'))
+    # NOT: str.lower() Türkçe büyük 'İ' harfini yanlış çevirir (görünmez bir
+    # "combining dot" karakteriyle "i̇" yapar, alt metin eşleşmesini bozar).
+    # Bu yüzden önce _TR_ASCII_MAP ile çeviriyoruz (İ->i tek karakter), sonra lower().
+    kind = kind_raw.strip().translate(_TR_ASCII_MAP).lower()
     if 'ticari' in kind or 'ticaret' in kind:
         return 'ticari'
-    if 'iş' in kind or 'işçilik' in kind or 'iş hukuku' in kind:
-        return 'isci'
-    if 'tüketici' in kind:
+    if 'tuketici' in kind:
         return 'tuketici'
+    if 'isci' in kind or 'is hukuku' in kind or re.search(r'\bis\b', kind):
+        return 'isci'
     if 'kira' in kind:
-        return 'kira'
+        return '18b_kira'
+    if 'ortakligin giderilmesi' in kind or 'ortaklik' in kind:
+        return '18b_ortaklik'
+    if 'kat mulkiyeti' in kind:
+        return '18b_kat'
+    if 'komsu' in kind:
+        return '18b_komsu'
     return 'diger'
+
+_18B_UYUSMAZLIK_METNI = {
+    '18b_kira': 'kira ilişkisinden kaynaklanan',
+    '18b_ortaklik': 'taşınır ve taşınmazların paylaştırılmasına ve ortaklığın giderilmesine ilişkin',
+    '18b_kat': '634 sayılı Kat Mülkiyeti Kanunundan kaynaklanan',
+    '18b_komsu': 'komşu hakkından kaynaklanan',
+}
 
 def _davet_dava_sarti(values, respondents):
     kind = _davet_kind(values)
@@ -172,6 +188,27 @@ def _davet_dava_sarti(values, respondents):
                 '7036 sayılı İş Mahkemeleri Kanunun 3 üncü maddesi uyarınca kanuna, bireysel veya toplu iş sözleşmesine dayanan işçi veya işveren alacağı ve tazminatı ile işe iade talebiyle açılan davalarda, arabulucuya başvurulmuş olması dava şartıdır.')
     if kind == 'tuketici':
         return '6502 sayılı Tüketicinin Korunması Hakkında Kanunun 73/A maddesi uyarınca tüketici mahkemelerinde görülen uyuşmazlıklarda dava açılmadan önce arabulucuya başvurulmuş olması dava şartıdır.'
+    if kind in _18B_UYUSMAZLIK_METNI:
+        return (f'6325 sayılı Hukuk Uyuşmazlıklarında Arabuluculuk Kanununun 18/B maddesi uyarınca '
+                f'{_18B_UYUSMAZLIK_METNI[kind]} uyuşmazlıklarda dava açılmadan önce arabulucuya başvurulmuş olması dava şartıdır.')
+    return ''
+
+def _davet_ucret_ek(values, respondents):
+    kind = _davet_kind(values)
+    if kind == 'tuketici':
+        return ('Tüketicinin ödemesi gereken arabuluculuk ücreti, Adalet Bakanlığı bütçesinden karşılanır. '
+                'Ancak belirtilen hâlde tüketicinin ödeyeceği arabuluculuk ücreti, Arabuluculuk Asgari Ücret '
+                'Tarifesinin eki Arabuluculuk Ücret Tarifesinin Birinci Kısmına göre iki saatlik ücret tutarını geçemez.')
+    if kind == 'isci':
+        return ('İşe iade talebiyle yapılan görüşmelerde tarafların anlaşmaları durumunda, arabulucuya ödenecek '
+                'ücretin belirlenmesinde işçiye işe başlatılmaması hâlinde ödenecek tazminat miktarı ile '
+                'çalıştırılmadığı süre için ödenecek ücret ve diğer haklarının toplamı, Tarifenin İkinci Kısmı '
+                'uyarınca üzerinde anlaşılan miktar olarak kabul edilir.')
+    return ''
+
+def _davet_katilim_ek(values, respondents):
+    if _davet_kind(values) == 'isci':
+        return 'İşverenin yazılı belgeyle yetkilendirdiği çalışanı da görüşmelerde işvereni temsil edebilir ve son tutanağı imzalayabilir.'
     return ''
 
 def _davet_sure(values, respondents):
@@ -209,6 +246,36 @@ def _davet_uyusmazlik_aciklama(values, respondents):
         return f'{applicant} ile ilgili {subject} konusundaki uyuşmazlığın arabuluculuk yoluyla çözümlenmesi amaçlanmaktadır.'.strip()
     return f'{applicant} ile {join_turkish_list(others)} arasındaki {subject} konusundaki uyuşmazlığın arabuluculuk yoluyla çözümlenmesi amaçlanmaktadır.'.strip()
 
+def _davet_muhatap_baslik(values, respondents):
+    """Mektubun üst hitap bloğu. Muhatabın (bu mektubun kime gittiğinin) bir
+    vekili varsa 'Sayın Av. X,' hitabı kullanılır; vekili yoksa (ister
+    başvurucu ister karşı taraf olsun) mektup doğrudan kendisine, isim +
+    açık adres bloğu formatında gider - resmi tebligat mantığına uygun."""
+    r = _recipient(values)
+    proxy = str(r.get('proxy') or '').strip()
+    if proxy:
+        # Vekil adı zaten "Av." ile girilmiş olabilir - unvan çift basılmasın.
+        proxy_clean = re.sub(r'^(av\.?\s*)+', '', proxy, flags=re.I).strip()
+        return f'Sayın Av. {proxy_clean},'
+    name = str(r.get('name') or '').strip()
+    address = str(r.get('address') or '').strip()
+    return f'{name}\n{address}'.strip() if address else name
+
+def _davet_basvuru_cumlesi(values, respondents):
+    """Mektubun 'başvuru üzerine...' cümlesi. Muhatap BAŞVURUCUNUN kendisiyse
+    (ya da onun vekiliyse) 2. şahısla ('tarafınızca yapmış olduğunuz
+    başvurunuz'), muhatap KARŞI TARAF ise 3. şahısla ('X tarafından yapılan
+    başvuru') yazılır - kim kime hitap ediyorsa ona göre değişir."""
+    buro = str(values.get('arabuluculukBurosu') or '').strip()
+    buro_phrase = f'{buro} Arabuluculuk Bürosuna' if buro else 'Arabuluculuk Bürosuna'
+    role = str(values.get('_davetRole') or 'karsi_taraf')
+    if role == 'basvurucu':
+        return f'{buro_phrase} yapmış olduğunuz başvurunuz üzerine'
+    applicant = str(values.get('basvurucuAdiSoyadi') or '').strip()
+    applicant_proxy = str(values.get('basvurucuVekili') or '').strip()
+    who = f'{applicant} adına vekili {applicant_proxy}' if applicant_proxy else applicant
+    return f'{who} tarafından {buro_phrase} yapılan başvuru üzerine'
+
 COMPUTED_BRACKETS = {
     'bugun': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
     'bugunuuntarihi': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
@@ -223,6 +290,10 @@ COMPUTED_BRACKETS = {
     'telekonferansyuzyuzetoplantiparagrafi': _davet_katilim,
     'basvurucuvekili': _davet_basvurucu_vekil,
     'uyusmazlikkonusununaciklamasi': _davet_uyusmazlik_aciklama,
+    'muhatapbaslikblogu': _davet_muhatap_baslik,
+    'basvurucumlesi': _davet_basvuru_cumlesi,
+    'dosyaturunegoreucretekparagrafi': _davet_ucret_ek,
+    'dosyaturunegorekatilimekcumlesi': _davet_katilim_ek,
     'muhatapadiunvani': lambda values,respondents: _recipient_value(values,'name'),
     'muhatapadres': lambda values,respondents: _recipient_value(values,'address'),
     'muhatapadresi': lambda values,respondents: _recipient_value(values,'address'),
@@ -1122,7 +1193,7 @@ def fill_general(text,values):
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None):
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
-            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta','arabuluculukBurosu']),
+            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
             ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi']),
             ('Harcama Pusulası',['daireBilgisi'])]
