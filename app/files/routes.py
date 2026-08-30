@@ -1,3 +1,4 @@
+from html import escape
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from app.auth.service import require_active_user
@@ -11,10 +12,22 @@ router=APIRouter()
 STATUS_LABELS={"open":"🟡 Açık","completed":"🟢 Tamamlandı"}
 
 @router.get("/",response_class=HTMLResponse)
-async def files(request:Request):
+async def files(request:Request,q:str="",status:str=""):
     u=require_active_user(request.cookies.get("session"))
     if not u:return HTMLResponse("Giriş yapmalısınız.",401)
     cases=[c for c in repos.cases.list_by_owner(u["id"]) if c.get("status")!="deleted"]
+
+    # Arama: başlık, dosya no, başvuru no, kayıt no, dosya türü alanlarında (büyük/küçük harf duyarsız) arar.
+    q_clean=q.strip()
+    if q_clean:
+        needle=q_clean.lower()
+        def _matches(c):
+            fields=[c.get("title"),c.get("file_no"),c.get("application_no"),c.get("registry_no"),c.get("file_type")]
+            return any(needle in str(f).lower() for f in fields if f)
+        cases=[c for c in cases if _matches(c)]
+    # Durum filtresi
+    if status in STATUS_LABELS:
+        cases=[c for c in cases if c.get("status")==status]
     rows=[]
     for r in cases:
         checklist=document_checklist(u["id"],r["id"])
@@ -45,8 +58,27 @@ async def files(request:Request):
     style='''<style>.status{font-size:13px;font-weight:normal}.checklist{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
     .chk{font-size:12px;padding:4px 8px;border-radius:999px;background:#f1f4f7;color:#66717c;text-decoration:none}
     .chk.on{background:#dcfce7;color:#166534}.links a{margin-right:4px}
-    .danger-link{border:none;background:none;color:#b91c1c;text-decoration:underline;cursor:pointer;font-size:14px;padding:0;font-family:inherit}</style>'''
-    return page("Dosyalar", style+"<h1>Dosyalarım</h1>"+("".join(rows) or "<p>Henüz dosyanız yok.</p>"))
+    .danger-link{border:none;background:none;color:#b91c1c;text-decoration:underline;cursor:pointer;font-size:14px;padding:0;font-family:inherit}
+    .search-bar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
+    .search-bar input[type=text]{flex:1;min-width:220px;padding:8px 12px;border:1px solid #d7dde3;border-radius:8px;font-size:14px}
+    .search-bar select{padding:8px 10px;border:1px solid #d7dde3;border-radius:8px;font-size:14px}
+    .search-bar button{padding:8px 16px;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font-size:14px}
+    .search-bar .clear-link{padding:8px 10px;font-size:14px;color:#66717c;text-decoration:none}
+    .result-count{font-size:13px;color:#66717c;margin:0 0 10px}</style>'''
+    q_val=escape(q_clean,quote=True)
+    status_options="".join(
+        f'<option value="{k}"{" selected" if status==k else ""}>{v}</option>' for k,v in STATUS_LABELS.items())
+    search_form=f'''<form method="get" action="/files/" class="search-bar">
+        <input type="text" name="q" value="{q_val}" placeholder="Dosya no, başvuru no, kayıt no veya ad ile ara">
+        <select name="status"><option value="">Tüm durumlar</option>{status_options}</select>
+        <button type="submit">Ara</button>
+        {'<a class="clear-link" href="/files/">Temizle</a>' if (q_clean or status) else ''}
+    </form>'''
+    result_info=""
+    if q_clean or status:
+        result_info=f'<p class="result-count">{len(cases)} sonuç bulundu</p>'
+    empty_message="Aramanızla eşleşen dosya bulunamadı." if (q_clean or status) else "Henüz dosyanız yok."
+    return page("Dosyalar", style+"<h1>Dosyalarım</h1>"+search_form+result_info+("".join(rows) or f"<p>{empty_message}</p>"))
 
 @router.post("/{case_id}/delete")
 async def delete_case(request:Request,case_id:str):
