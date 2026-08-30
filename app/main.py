@@ -30,6 +30,7 @@ from app.documents.engine import (
     extract_any_source, standard_result, set_parties_and_signatures, replace_meeting_paragraph,
     build_meeting_sentence, replace_final_legal_paragraph, fill_general, replace_talep_in_narrative,
     update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template,
+    fill_custom_template_tracked, update_offsets_exact,
     discover_folder_templates, FIXED_TEMPLATE_DOC_KIND,
 )
 from app.web import page
@@ -360,8 +361,8 @@ def _build_davet_outputs(data, values, respondents, u):
         v['_userIban']=u.get('iban') or ''
         v['_recipient']=recipient
         v['_davetRole']='basvurucu' if role=='Başvurucu' else 'karsi_taraf'
-        new=fill_custom_template(old,v,respondents)
-        out_xml=update_offsets(xml,old,new)
+        new,edits=fill_custom_template_tracked(old,v,respondents)
+        out_xml=update_offsets_exact(xml,edits,len(old),len(new))
         result=build_udf(files,out_xml,old,new)
         label=role
         filename=_safe_download_name(f"Davet Mektubu - {recipient.get('name') or role}")+".udf"
@@ -440,8 +441,8 @@ async def build(request:Request):
             if recognized:is_bracket_template=True
         if is_bracket_template:
             values["_userIban"]=u["iban"] or ""
-            new=fill_custom_template(old,values,respondents)
-            xml=update_offsets(xml,old,new)
+            new,edits=fill_custom_template_tracked(old,values,respondents)
+            xml=update_offsets_exact(xml,edits,len(old),len(new))
             result=build_udf(files,xml,old,new)
         else:
             applicant={"type":"kurum" if values.get("basvurucuVergiNo") else "kisi",
