@@ -664,6 +664,77 @@ def update_offsets(xml,a,b):
         return f'startOffset="{ns}" length="{max(0,ne-ns)}"'
     return re.sub(r'startOffset="(\d+)"\s+length="(\d+)"',f,xml)
 
+
+def fill_custom_template_tracked(text, values, respondents):
+    """fill_custom_template ile aynı işi yapar ([bracket] alanlarını değerlerle
+    değiştirir) ama SequenceMatcher'ın tahmin etmesine gerek kalmasın diye her
+    değişikliğin eski metindeki ve yeni metindeki tam konumunu da döner.
+
+    Dönüş: (yeni_metin, edits)
+      edits: [(old_start, old_end, new_start, new_end), ...] eski metindeki
+             sıraya göre, üst üste binmeyen aralıklar.
+
+    Bu bilgi update_offsets_exact ile birlikte kullanıldığında <elements>
+    ofsetleri fuzzy diff yerine kesin aritmetikle güncellenir; tekrar eden
+    hukuki ifadeler (ör. "hâlinde", "taraflarca") yüzünden SequenceMatcher'ın
+    yanlış "çapa" seçip ofsetleri kümülatif olarak kaydırması riski ortadan
+    kalkar.
+    """
+    edits = []
+    out = []
+    last = 0
+    new_pos = 0
+    for m in BRACKET_RE.finditer(text):
+        gap = text[last:m.start()]
+        out.append(gap)
+        new_pos += len(gap)
+        res = resolve_bracket_token(m.group(1))
+        if res is None:
+            value = ''
+        elif res[0] == 'field':
+            value = values.get(res[1]) or ''
+        elif res[0] == 'computed':
+            try:
+                value = COMPUTED_BRACKETS[res[1]](values, respondents)
+            except Exception:
+                value = ''
+        else:
+            _, idx, rf = res
+            value = respondents[idx].get(rf) or '' if 0 <= idx < len(respondents) else ''
+        out.append(value)
+        edits.append((m.start(), m.end(), new_pos, new_pos + len(value)))
+        new_pos += len(value)
+        last = m.end()
+    out.append(text[last:])
+    new_text = ''.join(out)
+    return new_text, edits
+
+
+def update_offsets_exact(xml, edits, old_len, new_len):
+    """update_offsets'ın deterministik sürümü. Fuzzy diff (difflib.SequenceMatcher)
+    yerine fill_custom_template_tracked'dan gelen kesin (old_start,old_end,new_start,new_end)
+    listesini kullanarak her startOffset/length çiftini eşler. Metnin nerede
+    değiştiğini tahmin etmeye gerek yok, zaten biliniyor -> yanlış eşleşme imkansız."""
+    def mp(p):
+        if p <= 0:
+            return 0
+        if p >= old_len:
+            return new_len
+        cum = 0
+        for os, oe, ns, ne in edits:
+            if p <= os:
+                return p + cum
+            if os < p <= oe:
+                return ne
+            cum += (ne - ns) - (oe - os)
+        return p + cum
+
+    def f(m):
+        s, l = int(m.group(1)), int(m.group(2))
+        ns, ne = mp(s), mp(s + l)
+        return f'startOffset="{ns}" length="{max(0,ne-ns)}"'
+    return re.sub(r'startOffset="(\d+)"\s+length="(\d+)"', f, xml)
+
 def replace_once(text,patterns,value):
     for p in patterns:
         m=re.search(p,text,re.I)
