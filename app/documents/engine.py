@@ -14,7 +14,7 @@ FIELDS=[
 ('arabulucuAdi','Arabulucu Adı'),('arabulucuTc','Arabulucu T.C. Kimlik No'),
 ('arabulucuSicil','Arabulucu Sicil No'),('arabulucuAdres','Arabulucu Adres'),('arabulucuTelefon','Arabulucu Telefon'),('arabulucuEposta','Arabulucu E-posta'),
 ('basvurucuTarafTuru','Başvurucu Taraf Türü'),('basvurucuVergiNo','Başvurucu Vergi No'),('basvurucuTcKimlik','Başvurucu T.C. Kimlik No'),('basvurucuAdiSoyadi','Başvurucu Adı Soyadı'),
-('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),
+('basvurucuAdres','Başvurucu Adres'),('basvurucuVekili','Başvurucu Vekili'),('basvurucuVekilTelefon','Başvurucu Vekili Telefon'),
 ('basvurucuTelefon','Başvurucu Telefon'),('basvurucuEposta','Başvurucu E-Posta'),
 ('dosyaTuru','Dosya Türü'),('uyusmazlik','Arabuluculuk Konusu Uyuşmazlık'),('uyusmazlikTuru','Uyuşmazlık Türü'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
@@ -55,6 +55,7 @@ FIELD_SYNONYMS = {
     'basvurucuadisoyadi':'basvurucuAdiSoyadi','basvurucuadi':'basvurucuAdiSoyadi','basvurucu':'basvurucuAdiSoyadi',
     'basvurucuadres':'basvurucuAdres',
     'basvurucuvekili':'basvurucuVekili','basvurucuvekil':'basvurucuVekili',
+    'basvurucuvekiltelefon':'basvurucuVekilTelefon','basvurucuvekilitelefon':'basvurucuVekilTelefon',
     'basvurucutelefon':'basvurucuTelefon','basvurucuceptel':'basvurucuTelefon','basvurucutelefonnumarasi':'basvurucuTelefon',
     'basvurucueposta':'basvurucuEposta','basvurucuepostaadresi':'basvurucuEposta','basvurucuemail':'basvurucuEposta',
     'basvurucutckimlikno':'basvurucuTcKimlik','basvurucutc':'basvurucuTcKimlik','basvurucutckimliknumarasi':'basvurucuTcKimlik',
@@ -227,11 +228,33 @@ def _davet_katilim(values, respondents):
     if sekil.startswith('yüz'):
         adres = str(values.get('gorusmeAdresi') or '').strip()
         date_phrase = f'{tarih} tarihinde saat {saat}’de' if tarih and saat else (f'{tarih} tarihinde' if tarih else (f'saat {saat}’de' if saat else ''))
-        return f'Sizlerle yapacağımız ilk toplantı, {date_phrase} {adres} adresinde yüz yüze gerçekleştirilecektir.'.replace('  ',' ').strip()
+        return (f'Sizlerle yapacağımız ilk toplantı, {date_phrase} {adres} adresinde yüz yüze gerçekleştirilecektir.'
+                + _davet_katilimcilar_notu(values, respondents)).replace('  ',' ').strip()
     date_phrase = f'{tarih} tarihinde saat {saat}’de' if tarih and saat else (f'{tarih} tarihinde' if tarih else (f'saat {saat}’de' if saat else ''))
     return (f'Sizlerle yapacağımız ilk toplantı, toplantıya katılımı kolay sağlamak adına telekonferans yöntemiyle {date_phrase} gerçekleşecektir. '
             f'Bunun için toplantı saatinden önce aşağıda yer alan numaradan ({telefon}) benimle iletişime geçmeniz önem arz etmektedir. '
-            'Talebiniz halinde yüz yüze toplantıda yapılabilecektir.').replace('  ',' ').strip()
+            'Talebiniz halinde yüz yüze toplantıda yapılabilecektir.' + _davet_katilimcilar_notu(values, respondents)).replace('  ',' ').strip()
+
+def _davet_katilimcilar_notu(values, respondents):
+    """Birden fazla karşı taraf varsa, toplantı cümlesinin ardına kimlerin
+    katılacağını hatırlatan kısa bir bilgi notu eklenir - tek taraf varsa
+    (muhatap zaten kim olduğunu bildiği için) hiçbir şey eklenmez."""
+    if len(respondents) < 2:
+        return ''
+    liste = _karsi_taraflar_vekilleri(values, respondents)
+    return f' Toplantıya {liste} de davetlidir.' if liste else ''
+
+def _karsi_taraflar_vekilleri(values, respondents):
+    """Birden fazla karşı taraf olduğunda hepsini vekilleriyle birlikte
+    'X vekili A, Y vekili B ve Z' şeklinde tek bir listede birleştirir."""
+    parts = []
+    for r in respondents:
+        name = str(r.get('name') or '').strip()
+        if not name:
+            continue
+        proxy = str(r.get('proxy') or '').strip()
+        parts.append(f'{name} vekili {proxy}' if proxy else name)
+    return join_turkish_list(parts)
 
 def _davet_basvurucu_vekil(values, respondents):
     name = str(values.get('basvurucuAdiSoyadi') or '').strip()
@@ -292,6 +315,7 @@ COMPUTED_BRACKETS = {
     'uyusmazlikkonusununaciklamasi': _davet_uyusmazlik_aciklama,
     'muhatapbaslikblogu': _davet_muhatap_baslik,
     'basvurucumlesi': _davet_basvuru_cumlesi,
+    'karsitaraflarvekilleri': _karsi_taraflar_vekilleri,
     'dosyaturunegoreucretekparagrafi': _davet_ucret_ek,
     'dosyaturunegorekatilimekcumlesi': _davet_katilim_ek,
     'muhatapadiunvani': lambda values,respondents: _recipient_value(values,'name'),
@@ -1227,8 +1251,8 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     elif values.get('basvurucuVergiNo'): type_note='Firma / kurum olarak algılandı (Vergi No mevcut).'
     elif values.get('basvurucuTcKimlik'): type_note='Gerçek kişi olarak algılandı (T.C. Kimlik No mevcut).'
     else: type_note='Taraf türü numara bilgisine göre otomatik belirlenecek.'
-    applicant_keys=['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta','basvurucuTcKimlik','basvurucuVergiNo']
-    applicant_inner=(f'<label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}"><label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}"><p class="hint">{escape(type_note)}</p>'+make_fields(['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuTelefon','basvurucuEposta']))
+    applicant_keys=['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuVekilTelefon','basvurucuTelefon','basvurucuEposta','basvurucuTcKimlik','basvurucuVergiNo']
+    applicant_inner=(f'<label>T.C. Kimlik No</label><input name="basvurucuTcKimlik" value="{atc}"><label>Vergi No</label><input name="basvurucuVergiNo" value="{atax}"><p class="hint">{escape(type_note)}</p>'+make_fields(['basvurucuAdiSoyadi','basvurucuAdres','basvurucuVekili','basvurucuVekilTelefon','basvurucuTelefon','basvurucuEposta']))
     cards+=section_card('Başvurucu Bilgileri',applicant_inner,filled_count(applicant_keys),len(applicant_keys),False)
     for title,ks in groups: cards+=section_card(title,make_fields(ks),filled_count(ks),len(ks),False)
 
