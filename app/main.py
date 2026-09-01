@@ -154,13 +154,13 @@ async def edit(request:Request,file:UploadFile=File(...)):
         text,kind=extract_any_source(file.filename or "",data)
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
-        values,respondents=extract(text)
+        values,respondents,notices=extract(text)
         # Profildeki arabulucu bilgileri yalnızca bilgi havuzunda boş kalan alanlara
         # başlangıç değeri olarak gelir; kaynak belgeden gelen gerçek dosya verileri ezilmez.
         values=apply_mediator_profile_defaults(u, values)
         cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya",values.get("dosyaTuru"))
         save_document(u["id"],data,file.filename or "kaynak",kind,cid)
-        html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]))
+        html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]),notices=notices)
         html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
                            f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
@@ -222,7 +222,7 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
     if not u:return RedirectResponse("/auth/login",303)
     form=await request.form(); values,respondents,locked,locked_resp=form_state(form); data=await merge_file.read()
     try:
-        text,kind=extract_any_source(merge_file.filename or "",data); nv,nr=extract(text); plan=get_plan(u["plan_id"])
+        text,kind=extract_any_source(merge_file.filename or "",data); nv,nr,notices=extract(text); plan=get_plan(u["plan_id"])
         if kind=="ocr" and not feature_enabled(plan,"documents.ocr"):return HTMLResponse("Planınız OCR desteklemiyor.",403)
         if kind=="ocr" and not consume(u["id"],"ocr",plan["limits"].get("ocr.monthly")):return HTMLResponse("Aylık OCR limitiniz dolmuştur.",429)
         base_values=apply_mediator_profile_defaults(u, values)
@@ -260,7 +260,7 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
         else:
             values,respondents=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
-                           notice,custom_templates=list_visible_templates(u["id"]))
+                           notice,custom_templates=list_visible_templates(u["id"]),notices=notices)
         html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
                           f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
