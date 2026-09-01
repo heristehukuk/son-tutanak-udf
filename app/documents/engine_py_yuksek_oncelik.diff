@@ -1,0 +1,151 @@
+--- ./son-tutanak-udf-main/app/documents/engine.py	2026-09-01 08:02:54.000000000 +0000
++++ /home/claude/v33/son-tutanak-udf-main/app/documents/engine.py	2026-09-01 20:04:52.564081555 +0000
+@@ -660,26 +660,53 @@
+     return ''
+ 
+ def section(text,start_terms,end_terms):
++    """Belirtilen start_terms etiketlerinden biri metinde bulunursa, en erken
++    geçenden başlayıp ilk end_terms etiketine kadar olan alt metni döndürür.
++    HİÇBİR start_terms bulunamazsa boş dize döner.
++    NOT: Eskiden bulunamama durumunda tüm belge (text[0:]) döndürülüyordu; bu,
++    ilgili bölüm belgede yoksa (ör. "ARABULUCU BİLGİLERİ" başlığı olmayan bir
++    başvuru formunda) o bölüme özgü alanların başka bir bölümden -örn. karşı
++    tarafın TC kimlik numarasından- yanlışlıkla doldurulmasına yol açabiliyordu.
++    Artık böyle bir durumda çağıran taraf boş bir sonuç alır; extract() içindeki
++    ilgili alanlar boş kalır (yanlış kişiye ait veri yazılmaz)."""
+     positions=[text.find(t) for t in start_terms if text.find(t)>=0]
+-    s=min(positions) if positions else 0
++    if not positions:
++        return ''
++    s=min(positions)
+     ends=[text.find(t,s+1) for t in end_terms]
+     e=min([x for x in ends if x>=0] or [len(text)])
+     return text[s:e]
+ 
++def _strip_inline_trailing_label(value):
++    """Bazı UYAP formlarında aynı satırda birden fazla alan yer alır
++    (ör. 'Adres\t: .    Cep Tel : 05054462124'). Adres regex'i satırın tamamını
++    yakaladığı için, değerin içine sonradan başka bir etiketin (Cep Tel,
++    Telefon, Vekili) karışmasını burada ayıklıyoruz."""
++    if not value:
++        return value
++    m=re.search(r'\s+(?:Cep\s*Tel|Telefon(?:\s+Numarası)?|Vekili)\s*[:：]',value,re.I)
++    return value[:m.start()].strip() if m else value
++
+ def party_values(seg):
+-    tax=first([r'(?:Vergi\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası)\s*[:：]\s*([0-9]{8,20})'],seg)
+-    tc=first([r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],seg)
+-    name=first([r'(?:Adı\s+Soyadı|Unvanı|Ünvanı)\s*[:：]\s*([^\n<]{2,250})'],seg)
++    # NOT: iki nokta üst üste sonrası [ \t]* kullanılır (\s* DEĞİL); \s* satır
++    # sonunu (\n) da yuttuğu için, değer boş bırakılmış bir alanda arama bir
++    # sonraki satıra/bölüm başlığına kayıp yanlış veri yakalayabiliyordu
++    # (ör. boş "Vekili :" alanının hemen altındaki "BAŞVURU BİLGİLERİ" başlığının
++    # vekil adı sanılması gibi).
++    tax=first([r'(?:Vergi\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası)\s*[:：][ \t]*([0-9]{8,20})'],seg)
++    tc=first([r'TC\s+Kimlik\s+No\s*[:：][ \t]*(\d{8,20})'],seg)
++    name=first([r'(?:Adı\s+Soyadı|Unvanı|Ünvanı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
+     # Kurumlarda çoğu başvuru formunda "Şirket Unvanı / Kurum Adı" gibi etiketler kullanılabilir.
+     if not name:
+-        name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：]\s*([^\n<]{2,250})'],seg)
++        name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
++    address=_strip_inline_trailing_label(first([r'Adres\s*[:：][ \t]*([^\n<]{2,400})'],seg))
+     return {
+         'type':'kurum' if tax and not tc else 'kisi',
+         'tc':tc,'tax':tax,'name':turkce_title_case(name),
+-        'address':turkce_title_case(first([r'Adres\s*[:：]\s*([^\n<]{2,400})'],seg)),
+-        'proxy':turkce_title_case(first([r'Vekili\s*[:：]\s*([^\n<]{1,250})'],seg)),
+-        'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],seg),
+-        'email':first([r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],seg)
++        'address':turkce_title_case(address),
++        'proxy':turkce_title_case(first([r'Vekili\s*[:：][ \t]*([^\n<]{1,250})'],seg)),
++        'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：][ \t]*([^\n<]{3,150})'],seg),
++        'email':first([r'E-Posta\s+Adresi\s*[:：][ \t]*([^\n<]{3,250})'],seg)
+     }
+ 
+ def extract_respondents(ptext):
+@@ -702,19 +729,40 @@
+ 
+ def extract(text):
+     ptext=udf_plain(text); out={k:'' for k,_ in FIELDS}
++    # NOT: Bu liste, ayrıştırıcının hangi bölümleri ARADIĞINI ve BULAMADIĞINI
++    # kullanıcıya açıkça bildirmek için toplanır. Eskiden bir alan boş kaldığında
++    # kullanıcı bunun "belgede gerçekten yok" mu yoksa "ayrıştırma başarısız oldu" mu
++    # olduğunu ayırt edemiyordu; render_editor artık bu notices listesini bir uyarı
++    # şeridi olarak gösteriyor.
++    notices=[]
+     for k in ['basvuruNo','dosyaNo']: out[k]=first(PATTERNS[k],ptext)
+     screen=extract_dosya_bilgileri_screen(ptext)
+     for k,v in screen.items():
+         if v:
+             out[k]=v
+-    arbsec=section(ptext,['ARABULUCU BİLGİLERİ','ARABULUCU'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
+-    out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})',r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],arbsec) or first([r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],ptext))
+-    for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],ptext)
+-    out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
++    # NOT: başlangıç terimi olarak yalnızca 'ARABULUCU' (tek kelime) kullanmak
++    # riskliydi; "ARABULUCULUK BÜROSU" gibi ifadelerin içinde alt-dize olarak
++    # geçtiği için section() belgenin çok daha erken bir noktasından başlıyor,
++    # bu da arabulucuTc/Sicil/Adres aramasının -aşağıda tüm belgede yapıldığı
++    # için- karşı tarafın TC kimlik numarasını arabulucununmuş gibi yakalamasına
++    # yol açabiliyordu. Artık: (1) tam başlık aranıyor, (2) bölüm bulunamazsa
++    # tüm belgede arama yapılmıyor (veriler boş kalır, yanlış kişiye ait veri
++    # yazılmaz; profil varsayılanları zaten bu alanları sonradan dolduruyor).
++    arbsec=section(ptext,['ARABULUCU BİLGİLERİ'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
++    if arbsec:
++        out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：][ \t]*([^\n<]{2,150})',r'ARABULUCU\s*[:：][ \t]*([^\n<]{2,150})'],arbsec))
++        for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],arbsec)
++        out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
++    else:
++        notices.append("Belgede \"Arabulucu Bilgileri\" bölümü bulunamadı; bu alanlar boş bırakıldı (varsa profilinizdeki arabulucu bilgileri otomatik doldurulur).")
+     applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
++    if not applicant:
++        notices.append("Belgede \"Başvuru Sahibi Bilgileri\" bölümü bulunamadı; başvurucu alanları boş kalmış olabilir, lütfen kontrol edin.")
+     a=party_values(applicant)
+     out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
+     respondents=extract_respondents(ptext)
++    if not respondents:
++        notices.append("Belgede \"Karşı Taraf Bilgileri\" bölümü bulunamadı veya taraf adı tespit edilemedi; lütfen karşı taraf bilgilerini elle kontrol edip ekleyin.")
+     generic_dosya=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext))
+     if generic_dosya and not out.get('dosyaTuru'):
+         out['dosyaTuru']=generic_dosya
+@@ -728,7 +776,7 @@
+         out['uyusmazlik']=out['dosyaTuru']
+     if out.get('baslangicTarihi'):
+         out['baslangicTarihi']=normalize_date_value(out['baslangicTarihi'])
+-    return out,respondents
++    return out,respondents,notices
+ 
+ def make_mapper(a,b):
+     sm=difflib.SequenceMatcher(a=a,b=b,autojunk=False); blocks=sm.get_matching_blocks()
+@@ -1443,7 +1491,7 @@
+         text=text[:m.start()]+line+text[m.end():]
+     return text
+ 
+-def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None):
++def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None,notices=None):
+     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
+             ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']),
+             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
+@@ -1523,15 +1571,19 @@
+         for t in (custom_templates or [])
+     )
+     msg=f'<div class="ok">{escape(message)}</div>' if message else ''
++    notice_html=''
++    if notices:
++        items=''.join(f'<li>{escape(n)}</li>' for n in notices)
++        notice_html=f'<div class="parse-warn"><b>⚠️ Ayrıştırma uyarısı:</b> Belgede aşağıdaki bölümler beklenen biçimde bulunamadı; ilgili alanları lütfen elle kontrol edin.<ul>{items}</ul></div>'
+     nav='<p><a href="/"><button type="button" class="secondary">← Ana Sayfa</button></a> <a href="/templates/"><button type="button" class="secondary">Şablonlarım</button></a></p>'
+     html='''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Son Tutanak Bilgi Havuzu</title><style>
+-*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.info-section>summary,.respondent-card>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:18px;font-weight:bold}.info-section>summary::-webkit-details-marker,.respondent-card>summary::-webkit-details-marker{display:none}.info-section>summary:before,.respondent-card>summary:before{content:'▶';font-size:12px;margin-right:8px}.info-section[open]>summary:before,.respondent-card[open]>summary:before{content:'▼'}.section-status{font-size:12px;font-weight:normal;color:#53606b;white-space:nowrap}.section-body{padding-top:12px}.pool-controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 16px}.pool-controls button{margin-top:0}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
+-</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1>{nav}<div class="pool-controls"><button type="button" class="secondary" onclick="setAllSections(true)">▼ Tümünü Aç</button><button type="button" class="secondary" onclick="setAllSections(false)">▶ Tümünü Kapat</button></div><p class="hint">Kaynak belge: __FILENAME__</p>__MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Harcama Pusulası</h2><p class="hint">Bu ekrandaki Dosya Türü, Karşı Taraflar ve Arabulucu bilgilerini kullanarak, IBAN'ınızı (Profilim) da ekleyerek Harcama Pusulası üretir.</p><button type="submit" formaction="/harcama-pusulasi/build" class="secondary">📄 Harcama Pusulası Oluştur</button></section><section class="card"><h2>📅 Takvim ve Görevler</h2><p class="hint">Başvurucu Adı Soyadı, Dosya Türü ve Süreç Başlangıç Tarihi doldurulduysa bu dosya için otomatik süre hatırlatıcıları ve 6 standart görev oluşturur (zaten oluşturulmuşsa tekrar oluşturmaz, sadece günceller).</p><button type="submit" formaction="/case/schedule" class="secondary">📅 Takvime Ekle / Görevleri Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
++*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f2f5f8;margin:0;color:#20252b}.wrap{max-width:1100px;margin:25px auto;padding:0 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 4px 20px #0001}label{display:block;font-weight:bold;margin-top:10px}input,textarea,select{width:100%;padding:10px;margin-top:5px;border:1px solid #ccd3db;border-radius:8px;font:inherit}textarea{min-height:70px;resize:vertical}button{background:#1769e0;color:white;border:0;border-radius:9px;padding:13px 18px;font-weight:bold;cursor:pointer;margin-top:12px}.secondary{background:#44515f}.lock{font-size:12px!important;font-weight:normal!important;color:#53606b}.lock input{width:auto}.info-section>summary,.respondent-card>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:18px;font-weight:bold}.info-section>summary::-webkit-details-marker,.respondent-card>summary::-webkit-details-marker{display:none}.info-section>summary:before,.respondent-card>summary:before{content:'▶';font-size:12px;margin-right:8px}.info-section[open]>summary:before,.respondent-card[open]>summary:before{content:'▼'}.section-status{font-size:12px;font-weight:normal;color:#53606b;white-space:nowrap}.section-body{padding-top:12px}.pool-controls{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 16px}.pool-controls button{margin-top:0}.party-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.party-head h3{margin:0}.ok{background:#eaf8ee;color:#176b35;padding:12px;border-radius:8px;margin-bottom:15px}.parse-warn{background:#fff7ed;color:#7c2d12;border:1px solid #fdba74;padding:12px 14px;border-radius:8px;margin-bottom:15px;font-size:14px}.parse-warn ul{margin:6px 0 0;padding-left:20px}.hint{color:#65717d;font-size:13px}@media(max-width:800px){.grid{grid-template-columns:1fr}.party-head{display:block}}
++</style></head><body><div class="wrap"><h1>Son Tutanak Bilgi Havuzu</h1>{nav}<div class="pool-controls"><button type="button" class="secondary" onclick="setAllSections(true)">▼ Tümünü Aç</button><button type="button" class="secondary" onclick="setAllSections(false)">▶ Tümünü Kapat</button></div><p class="hint">Kaynak belge: __FILENAME__</p>__NOTICES__ __MSG__<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><div class="grid"><div>__CARDS__<section class="card"><h2>Karşı Taraflar</h2><p class="hint">Bir veya birden fazla karşı taraf ekleyebilirsiniz.</p><div id="respondents">__RESP__</div><button type="button" class="secondary" onclick="addRespondent()">+ Karşı Taraf Ekle</button></section></div><div><section class="card"><h2>Belgeleri Birleştir</h2><p class="hint">İlk belgedeki kontrol ettiğiniz alanları 🔒 sabitleyin. Yeni bir UDF yüklediğinizde sabit alanlar değişmez; diğer alanlar yeni belgeden tamamlanır.</p><input type="file" name="merge_file" accept=".udf"><button type="submit" formaction="/merge" class="secondary">Belgeyi Bilgi Havuzuna Ekle</button></section><section class="card"><h2>Son Tutanağı Oluştur</h2><label>Belge türü</label><select name="template_choice">__OPTIONS__<option value="custom">Kendi UDF şablonumu kullan</option></select><div id="custom"><label>Özel Son Tutanak UDF</label><input type="file" name="custom_file" accept=".udf"></div><button type="submit">✓ Son Tutanağı Oluştur</button></section><section class="card"><h2>Harcama Pusulası</h2><p class="hint">Bu ekrandaki Dosya Türü, Karşı Taraflar ve Arabulucu bilgilerini kullanarak, IBAN'ınızı (Profilim) da ekleyerek Harcama Pusulası üretir.</p><button type="submit" formaction="/harcama-pusulasi/build" class="secondary">📄 Harcama Pusulası Oluştur</button></section><section class="card"><h2>📅 Takvim ve Görevler</h2><p class="hint">Başvurucu Adı Soyadı, Dosya Türü ve Süreç Başlangıç Tarihi doldurulduysa bu dosya için otomatik süre hatırlatıcıları ve 6 standart görev oluşturur (zaten oluşturulmuşsa tekrar oluşturmaz, sadece günceller).</p><button type="submit" formaction="/case/schedule" class="secondary">📅 Takvime Ekle / Görevleri Oluştur</button></section><section class="card"><h2>Bilgi Havuzu</h2><p class="hint">Kilitli alanlar yeni belgelerle değiştirilmez. Yeni belge yükleyerek eksik alanları tamamlayabilirsiniz.</p><button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button></section></div></div></form></div><script>
+ let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.getElementById('respondents');const i=rc++;const d=document.createElement('section');d.className='card respondent-card';d.innerHTML='<div class="party-head"><h3>Karşı Taraf '+(i+1)+'</h3><label class="lock"><input type="checkbox" name="locked_resp" value="'+i+'"> 🔒 Bu tarafı sabitle</label></div><div class="party"><label>Taraf Türü</label><select name="resp_'+i+'_type"><option value="kisi">Kişi</option><option value="kurum">Kurum / Şirket</option></select></div><div class="party"><label>T.C. Kimlik No</label><input name="resp_'+i+'_tc"></div><div class="party"><label>Vergi No</label><input name="resp_'+i+'_tax"></div><div class="party"><label>Adı Soyadı / Unvanı</label><input name="resp_'+i+'_name"></div><div class="party"><label>Adres</label><textarea name="resp_'+i+'_address"></textarea></div><div class="party"><label>Vekili</label><input name="resp_'+i+'_proxy"></div><div class="party"><label>Telefon</label><input name="resp_'+i+'_phone"></div><div class="party"><label>E-posta</label><input name="resp_'+i+'_email"></div>';root.appendChild(d)}
+ function setAllSections(open){document.querySelectorAll('details.info-section,details.respondent-card').forEach(function(d){d.open=open})}
+ function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
+ function toggleMeeting(){const s=document.querySelector('select[name=gorusmeSekli]');const f=document.querySelector('textarea[name=gorusmeAdresi]');if(!s||!f)return;f.parentElement.style.display=s.value==='Yüz yüze'?'block':'none';}document.addEventListener('change',e=>{if(e.target.name==='gorusmeSekli')toggleMeeting()});document.addEventListener('DOMContentLoaded',toggleMeeting);</script></body></html>'''
+-    return html.replace('__FILENAME__',escape(filename)).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
++    return html.replace('__FILENAME__',escape(filename)).replace('__NOTICES__',notice_html).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
+ 
+ 
+ def extract_any_source(filename, data):
