@@ -55,6 +55,7 @@ FIELD_SYNONYMS = {
     'basvurucuadisoyadi':'basvurucuAdiSoyadi','basvurucuadi':'basvurucuAdiSoyadi','basvurucu':'basvurucuAdiSoyadi',
     'basvurucuadres':'basvurucuAdres',
     'basvurucuvekili':'basvurucuVekili','basvurucuvekil':'basvurucuVekili',
+    'basvurucuvekiladi':'basvurucuVekili',
     'basvurucuvekiltelefon':'basvurucuVekilTelefon','basvurucuvekilitelefon':'basvurucuVekilTelefon',
     'basvurucutelefon':'basvurucuTelefon','basvurucuceptel':'basvurucuTelefon','basvurucutelefonnumarasi':'basvurucuTelefon',
     'basvurucueposta':'basvurucuEposta','basvurucuepostaadresi':'basvurucuEposta','basvurucuemail':'basvurucuEposta',
@@ -299,6 +300,81 @@ def _davet_basvuru_cumlesi(values, respondents):
     who = f'{applicant} adına vekili {applicant_proxy}' if applicant_proxy else applicant
     return f'{who} tarafından {buro_phrase} yapılan başvuru üzerine'
 
+def _tutanak_basvurucu_kimlik_etiketi(values, respondents):
+    return 'Vergi No' if str(values.get('basvurucuVergiNo') or '').strip() else 'TC Kimlik No'
+
+def _tutanak_basvurucu_kimlik_no(values, respondents):
+    return str(values.get('basvurucuVergiNo') or values.get('basvurucuTcKimlik') or '').strip()
+
+def _tutanak_basvurucu_adi_etiketi(values, respondents):
+    return 'Adı Soyadı / Unvanı' if str(values.get('basvurucuVergiNo') or '').strip() else 'Adı Soyadı'
+
+def _tutanak_karsi_taraf_blogu(values, respondents):
+    """KARŞI TARAF BİLGİLERİ başlığından sonraki tüm 'Diğer Taraf N' bloklarını
+    üretir. Taraf sayısı değişken olduğu için tek bir metin bloğu olarak
+    birleştirilip [KARŞI TARAF BİLGİLERİ BLOĞU] köşeli parantezine yerleştirilir;
+    update_offsets_exact bu değerin içindeki satır sonlarını otomatik olarak
+    ayrı paragraflara böler (bkz. update_offsets_exact)."""
+    blocks = []
+    for i, p in enumerate(respondents, 1):
+        typ = (p.get('type') or 'kisi').lower()
+        id_label = 'Vergi No' if typ == 'kurum' else 'TC Kimlik No'
+        id_value = p.get('tax', '') if typ == 'kurum' else p.get('tc', '')
+        name_label = 'Adı Soyadı / Unvanı' if typ == 'kurum' else 'Adı Soyadı'
+        lines = [
+            f'Diğer Taraf {i}', '',
+            f'{id_label}\t\t: {id_value}',
+            f'{name_label}\t\t: {p.get("name","")}',
+            f'Adres\t\t: {p.get("address","")}',
+            f'Vekili\t\t: {p.get("proxy","")}',
+            f'Cep Tel\t\t: {p.get("phone","")}',
+        ]
+        if p.get('email'):
+            lines.append(f'E-posta\t\t: {p.get("email","")}')
+        blocks.append('\n'.join(lines))
+    return '\n\n'.join(blocks)
+
+def _tutanak_gorusme_cumlesi(values, respondents):
+    applicant = {
+        'name': values.get('basvurucuAdiSoyadi', ''),
+        'proxy': values.get('basvurucuVekili', ''),
+        '_arb_name': values.get('arabulucuAdi', ''),
+    }
+    return build_meeting_sentence(values, applicant, respondents)
+
+def _tutanak_talep_anlatimi(values, respondents):
+    name = str(values.get('basvurucuAdiSoyadi') or '').strip()
+    proxy = str(values.get('basvurucuVekili') or '').strip()
+    talep = str(values.get('talep') or '').strip().strip('"“”')
+    if not talep:
+        return ''
+    others = [str(r.get('name') or '').strip() for r in respondents if str(r.get('name') or '').strip()]
+    karsi = join_turkish_list(others) if others else ''
+    prefix = f'Başvurucu vekili; Başvurucu {name}' if proxy else f'Başvurucu {name}'
+    orta = f' ile {karsi} arasında' if karsi else ''
+    return f'{prefix}{orta} {talep} hususunda talebi olduğunu beyan etmiştir.'
+
+def _tutanak_final_hukuki_paragraf(values, respondents):
+    return final_legal_paragraph(values)
+
+def _tutanak_imza_blogu(values, respondents):
+    """Değişken sayıda taraf içeren İMZALAR bloğunu üretir (bkz. _tutanak_karsi_taraf_blogu
+    ile aynı 'satır sonu içeren tek değer' yaklaşımı)."""
+    name = str(values.get('basvurucuAdiSoyadi') or '').strip()
+    proxy = str(values.get('basvurucuVekili') or '').strip()
+    lines = [f'Taraf 1        : {name}' + (f' - Vekili {proxy}' if proxy else '') + '  (e-imza)', '']
+    for i, p in enumerate(respondents, start=2):
+        nm = str(p.get('name') or '').strip()
+        if not nm:
+            continue
+        pr = str(p.get('proxy') or '').strip()
+        lines.append(f'Taraf {i}        : {nm}' + (f' - Vekili {pr}' if pr else '') + '  (e-imza)')
+        lines.append('')
+    arb_name = str(values.get('arabulucuAdi') or '').strip()
+    arb_sicil = str(values.get('arabulucuSicil') or '').strip()
+    lines.append(f'Arabulucu      : {arb_name}' + (f' ({arb_sicil})' if arb_sicil else '') + ' (e-imza)')
+    return '\n'.join(lines)
+
 COMPUTED_BRACKETS = {
     'bugun': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
     'bugunuuntarihi': lambda values,respondents: date.today().strftime('%d/%m/%Y'),
@@ -325,6 +401,14 @@ COMPUTED_BRACKETS = {
     'muhataptel': lambda values,respondents: _recipient_value(values,'phone'),
     'muhatape posta': lambda values,respondents: _recipient_value(values,'email'),
     'muhatapeposta': lambda values,respondents: _recipient_value(values,'email'),
+    'basvurucukimliketiketi': _tutanak_basvurucu_kimlik_etiketi,
+    'basvurucukimlikno': _tutanak_basvurucu_kimlik_no,
+    'basvurucuadietiketi': _tutanak_basvurucu_adi_etiketi,
+    'karsitarafbilgileriblogu': _tutanak_karsi_taraf_blogu,
+    'gorusmecumlesi': _tutanak_gorusme_cumlesi,
+    'talepanlatimi': _tutanak_talep_anlatimi,
+    'finalhukukiparagraf': _tutanak_final_hukuki_paragraf,
+    'imzablogu': _tutanak_imza_blogu,
 }
 COMPUTED_LABELS = {
     'bugun': "Bugünün Tarihi (otomatik doldurulur)", 'tarih': "Bugünün Tarihi (otomatik doldurulur)",
@@ -710,11 +794,21 @@ def fill_custom_template_tracked(text, values, respondents):
     return new_text, edits
 
 
-def update_offsets_exact(xml, edits, old_len, new_len):
+def update_offsets_exact(xml, edits, old_len, new_text):
     """update_offsets'ın deterministik sürümü. Fuzzy diff (difflib.SequenceMatcher)
     yerine fill_custom_template_tracked'dan gelen kesin (old_start,old_end,new_start,new_end)
     listesini kullanarak her startOffset/length çiftini eşler. Metnin nerede
-    değiştiğini tahmin etmeye gerek yok, zaten biliniyor -> yanlış eşleşme imkansız."""
+    değiştiğini tahmin etmeye gerek yok, zaten biliniyor -> yanlış eşleşme imkansız.
+
+    Ayrıca: bazı hesaplanan alanlar (ör. vekilsiz muhatap için "İsim\\nAdres" gibi)
+    kendi DEĞERİNİN İÇİNDE satır sonu taşıyabilir. Böyle bir durumda, o değeri
+    saran tek paragraf artık iki (veya daha fazla) görsel satırı birden kapsar
+    hale gelir; UYAP gibi sıkı bir ayrıştırıcı bunu reddedebilir. Bu fonksiyon,
+    eşleme sonrası bir paragrafın kapsadığı metinde satır sonu tespit ederse,
+    o paragrafı satır sınırlarında otomatik olarak ayrı <paragraph> bloklarına
+    böler; bold/size/Alignment öznitelikleri korunur."""
+    new_len = len(new_text)
+
     def mp(p):
         if p <= 0:
             return 0
@@ -729,11 +823,74 @@ def update_offsets_exact(xml, edits, old_len, new_len):
             cum += (ne - ns) - (oe - os)
         return p + cum
 
-    def f(m):
-        s, l = int(m.group(1)), int(m.group(2))
-        ns, ne = mp(s), mp(s + l)
-        return f'startOffset="{ns}" length="{max(0,ne-ns)}"'
-    return re.sub(r'startOffset="(\d+)"\s+length="(\d+)"', f, xml)
+    em = re.search(r'(<elements\b[^>]*>)(.*?)(</elements>)', xml, re.S)
+    if not em:
+        # <elements> bölümü bulunamazsa eski (blok bazlı olmayan) davranışa dön.
+        def f(m):
+            s, l = int(m.group(1)), int(m.group(2))
+            ns, ne = mp(s), mp(s + l)
+            return f'startOffset="{ns}" length="{max(0,ne-ns)}"'
+        return re.sub(r'startOffset="(\d+)"\s+length="(\d+)"', f, xml)
+
+    head, body, tail = em.group(1), em.group(2), em.group(3)
+    blocks = re.findall(r'<paragraph\b[^>]*>.*?</paragraph>\s*', body, re.S)
+
+    out_blocks = []
+    for b in blocks:
+        align_m = re.search(r'Alignment="([^"]*)"', b)
+        align = align_m.group(1) if align_m else ''
+        runs = []
+        for cm in re.finditer(r'<content\b([^>]*?)startOffset="(\d+)"\s+length="(\d+)"([^>]*)/>', b):
+            pre, s, l, post = cm.group(1), int(cm.group(2)), int(cm.group(3)), cm.group(4)
+            bold_m = re.search(r'bold="([^"]*)"', pre + post)
+            size_m = re.search(r'size="([^"]*)"', pre + post)
+            bold = bold_m.group(1) if bold_m else 'false'
+            size = size_m.group(1) if size_m else '12'
+            ns, ne = mp(s), mp(s + l)
+            runs.append((ns, max(ns, ne), bold, size))
+        if not runs:
+            out_blocks.append(b)
+            continue
+
+        span_start, span_end = runs[0][0], runs[-1][1]
+        span_text = new_text[span_start:span_end]
+        if chr(10) not in span_text:
+            # tek satırda kalıyor, orijinal yapıyı koru (sadece ofsetleri yaz)
+            piece = f'<paragraph Alignment="{align}">' if align else '<paragraph>'
+            for ns, ne, bold, size in runs:
+                piece += f'<content bold="{bold}" size="{size}" startOffset="{ns}" length="{max(0,ne-ns)}" />'
+            piece += '</paragraph>\n'
+            out_blocks.append(piece)
+            continue
+
+        # satır sonu içeriyor -> satır satır ayrı paragraflara böl
+        lines = span_text.splitlines(keepends=True)
+        pos = span_start
+        run_idx = 0
+        for line in lines:
+            ln = len(line)
+            line_start, line_end = pos, pos + ln
+            sub_runs = []
+            while run_idx < len(runs) and runs[run_idx][0] < line_end:
+                rs, re_, bold, size = runs[run_idx]
+                seg_s, seg_e = max(rs, line_start), min(re_, line_end)
+                if seg_e > seg_s:
+                    sub_runs.append((seg_s, seg_e, bold, size))
+                if re_ <= line_end:
+                    run_idx += 1
+                else:
+                    break
+            if not sub_runs:
+                sub_runs = [(line_start, line_end, runs[0][2], runs[0][3])]
+            piece = f'<paragraph Alignment="{align}">' if align else '<paragraph>'
+            for ns, ne, bold, size in sub_runs:
+                piece += f'<content bold="{bold}" size="{size}" startOffset="{ns}" length="{max(0,ne-ns)}" />'
+            piece += '</paragraph>\n'
+            out_blocks.append(piece)
+            pos = line_end
+
+    new_body = ''.join(out_blocks)
+    return xml[:em.start()] + head + new_body + tail + xml[em.end():]
 
 def replace_once(text,patterns,value):
     for p in patterns:
