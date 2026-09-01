@@ -666,20 +666,50 @@ def section(text,start_terms,end_terms):
     e=min([x for x in ends if x>=0] or [len(text)])
     return text[s:e]
 
+def section_found(text,start_terms,end_terms):
+    """section() ile aynı mantık, ancak start_terms metinde hiç bulunamazsa
+    (None yerine tüm metne düşmek yerine) None döner. Böylece çağıran taraf,
+    ilgili bölüm belgede yoksa o bölüme özel alanlarda TÜM belgeyi aramamayı
+    seçebilir; aksi halde başka bir bölümden (ör. karşı taraf bilgileri)
+    yanlışlıkla veri sızabilir."""
+    positions=[text.find(t) for t in start_terms if text.find(t)>=0]
+    if not positions:
+        return None
+    s=min(positions)
+    ends=[text.find(t,s+1) for t in end_terms]
+    e=min([x for x in ends if x>=0] or [len(text)])
+    return text[s:e]
+
+def _strip_inline_trailing_label(value):
+    """Bazı UYAP formlarında aynı satırda birden fazla alan yer alır
+    (ör. 'Adres\t: .    Cep Tel : 05054462124'). Adres regex'i satırın tamamını
+    yakaladığı için, değerin içine sonradan başka bir etiketin (Cep Tel,
+    Telefon, Vekili) karışmasını burada ayıklıyoruz."""
+    if not value:
+        return value
+    m=re.search(r'\s+(?:Cep\s*Tel|Telefon(?:\s+Numarası)?|Vekili)\s*[:：]',value,re.I)
+    return value[:m.start()].strip() if m else value
+
 def party_values(seg):
-    tax=first([r'(?:Vergi\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası)\s*[:：]\s*([0-9]{8,20})'],seg)
-    tc=first([r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],seg)
-    name=first([r'(?:Adı\s+Soyadı|Unvanı|Ünvanı)\s*[:：]\s*([^\n<]{2,250})'],seg)
+    # NOT: iki nokta üst üste sonrası [ \t]* kullanılır (\s* DEĞİL); \s* satır
+    # sonunu (\n) da yuttuğu için, değer boş bırakılmış bir alanda arama bir
+    # sonraki satıra/bölüm başlığına kayıp yanlış veri yakalayabiliyordu
+    # (ör. boş "Vekili :" alanının hemen altındaki "BAŞVURU BİLGİLERİ" başlığının
+    # vekil adı sanılması gibi).
+    tax=first([r'(?:Vergi\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası)\s*[:：][ \t]*([0-9]{8,20})'],seg)
+    tc=first([r'TC\s+Kimlik\s+No\s*[:：][ \t]*(\d{8,20})'],seg)
+    name=first([r'(?:Adı\s+Soyadı|Unvanı|Ünvanı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
     # Kurumlarda çoğu başvuru formunda "Şirket Unvanı / Kurum Adı" gibi etiketler kullanılabilir.
     if not name:
-        name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：]\s*([^\n<]{2,250})'],seg)
+        name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
+    address=_strip_inline_trailing_label(first([r'Adres\s*[:：][ \t]*([^\n<]{2,400})'],seg))
     return {
         'type':'kurum' if tax and not tc else 'kisi',
         'tc':tc,'tax':tax,'name':turkce_title_case(name),
-        'address':turkce_title_case(first([r'Adres\s*[:：]\s*([^\n<]{2,400})'],seg)),
-        'proxy':turkce_title_case(first([r'Vekili\s*[:：]\s*([^\n<]{1,250})'],seg)),
-        'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],seg),
-        'email':first([r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],seg)
+        'address':turkce_title_case(address),
+        'proxy':turkce_title_case(first([r'Vekili\s*[:：][ \t]*([^\n<]{1,250})'],seg)),
+        'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：][ \t]*([^\n<]{3,150})'],seg),
+        'email':first([r'E-Posta\s+Adresi\s*[:：][ \t]*([^\n<]{3,250})'],seg)
     }
 
 def extract_respondents(ptext):
@@ -707,10 +737,19 @@ def extract(text):
     for k,v in screen.items():
         if v:
             out[k]=v
-    arbsec=section(ptext,['ARABULUCU BİLGİLERİ','ARABULUCU'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
-    out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})',r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],arbsec) or first([r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})'],ptext))
-    for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],ptext)
-    out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
+    # NOT: başlangıç terimi olarak yalnızca 'ARABULUCU' (tek kelime) kullanmak
+    # riskliydi; "ARABULUCULUK BÜROSU" gibi ifadelerin içinde alt-dize olarak
+    # geçtiği için section() belgenin çok daha erken bir noktasından başlıyor,
+    # bu da arabulucuTc/Sicil/Adres aramasının -aşağıda tüm belgede yapıldığı
+    # için- karşı tarafın TC kimlik numarasını arabulucununmuş gibi yakalamasına
+    # yol açabiliyordu. Artık: (1) tam başlık aranıyor, (2) bölüm bulunamazsa
+    # tüm belgede arama yapılmıyor (veriler boş kalır, yanlış kişiye ait veri
+    # yazılmaz; profil varsayılanları zaten bu alanları sonradan dolduruyor).
+    arbsec=section_found(ptext,['ARABULUCU BİLGİLERİ'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
+    if arbsec is not None:
+        out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：][ \t]*([^\n<]{2,150})',r'ARABULUCU\s*[:：][ \t]*([^\n<]{2,150})'],arbsec))
+        for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],arbsec)
+        out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
     applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
     a=party_values(applicant)
     out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
