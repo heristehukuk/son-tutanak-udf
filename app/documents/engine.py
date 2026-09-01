@@ -481,7 +481,6 @@ def fill_custom_template(text, values, respondents):
 PATTERNS={
 'basvuruNo':[r'BAŞVURU\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Başvuru\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
 'dosyaNo':[r'DOSYA\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Dosya\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
-'arabulucuAdi':[r'ARABULUCU\s*[:：]\s*([^\n<]{2,150})',r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,150})'],
 'arabulucuTc':[r'T\.?\s*C\.?\s*(?:KİMLİK\s+NUMARASI|Kimlik\s+No)\s*[:：]\s*(\d{8,20})'],
 'arabulucuSicil':[r'(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*([^\n<]{1,80})'],
 'arabulucuAdres':[r'(?:ARABULUCU\s+BİLGİLERİ.*?Adresi|ADRESİ|Adresi)\s*[:：]\s*([^\n<]{5,300})'],
@@ -545,7 +544,28 @@ def normalize_case_number(value, full_text=''):
     m=re.search(r'(?<!\d)(\d{4})\s*/\s*(\d{3,})(?!\d)', value or '')
     if m:
         return f"{m.group(1)}/{m.group(2)}"
+    # Bazı belgelerde yıl/sıra ayracı '/' değil '-' olabilir (ör. "2026-123").
+    # Bu durumda da standart "YIL/SIRA" biçimine çeviriyoruz; aksi halde aynı
+    # dosyanın iki farklı belgesi arasında yanlış bir "çakışma" tespit edilebilir
+    # ya da gerçek bir çakışma normalize edilmediği için fark edilmeyebilir.
+    m=re.search(r'(?<!\d)(\d{4})\s*-\s*(\d{3,})(?!\d)', value or '')
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
     return v
+
+def is_valid_tc_kimlik(tc):
+    """T.C. Kimlik Numarası resmi checksum algoritmasını uygular.
+    OCR/kaynak belgeden gelen numaranın bozuk olup olmadığını tespit etmek için
+    kullanılır; hiçbir alanı bloke etmez, yalnızca notices uyarısı üretmek içindir."""
+    d=re.sub(r'\D','',tc or '')
+    if len(d)!=11 or d[0]=='0':
+        return False
+    digits=[int(c) for c in d]
+    odd_sum=sum(digits[0:9:2])
+    even_sum=sum(digits[1:8:2])
+    d10=((odd_sum*7)-even_sum)%10
+    d11=sum(digits[:10])%10
+    return d10==digits[9] and d11==digits[10]
 
 
 def extract_dosya_bilgileri_screen(ptext):
@@ -713,6 +733,7 @@ def extract_respondents(ptext):
     seg=section(ptext,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK','TALEP','Arabuluculuk Sürecinin'])
     # İlk yöntem: tekrar eden "Adı Soyadı" etiketlerine göre bloklara ayır.
     matches=list(re.finditer(r'Adı\s+Soyadı\s*[:：]',seg,re.I))
+    dropped=max(0,len(matches)-MAX_RESP)
     parties=[]
     for i,m in enumerate(matches[:MAX_RESP]):
         starts=[seg.rfind('\nTC Kimlik No',0,m.start()),seg.rfind('\nVergi No',0,m.start()),seg.rfind('\nAdı Soyadı',0,m.start())]
@@ -722,10 +743,10 @@ def extract_respondents(ptext):
         pv=party_values(chunk)
         if pv['name']:
             parties.append(pv)
-    if parties:return parties
+    if parties:return parties,dropped
     # Tek blok için yedek yöntem.
     pv=party_values(seg)
-    return [pv] if pv['name'] else []
+    return ([pv] if pv['name'] else []),0
 
 def extract(text):
     ptext=udf_plain(text); out={k:'' for k,_ in FIELDS}
@@ -755,14 +776,23 @@ def extract(text):
         out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
     else:
         notices.append("Belgede \"Arabulucu Bilgileri\" bölümü bulunamadı; bu alanlar boş bırakıldı (varsa profilinizdeki arabulucu bilgileri otomatik doldurulur).")
+    if out.get('arabulucuTc') and not is_valid_tc_kimlik(out['arabulucuTc']):
+        notices.append(f"Arabulucu T.C. Kimlik No ({out['arabulucuTc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
     applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
     if not applicant:
         notices.append("Belgede \"Başvuru Sahibi Bilgileri\" bölümü bulunamadı; başvurucu alanları boş kalmış olabilir, lütfen kontrol edin.")
     a=party_values(applicant)
     out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
-    respondents=extract_respondents(ptext)
+    if a['tc'] and not is_valid_tc_kimlik(a['tc']):
+        notices.append(f"Başvurucu T.C. Kimlik No ({a['tc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
+    respondents,dropped_resp=extract_respondents(ptext)
     if not respondents:
         notices.append("Belgede \"Karşı Taraf Bilgileri\" bölümü bulunamadı veya taraf adı tespit edilemedi; lütfen karşı taraf bilgilerini elle kontrol edip ekleyin.")
+    if dropped_resp:
+        notices.append(f"Belgede {dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle okunamadı; gerekirse elle ekleyin.")
+    for idx,p in enumerate(respondents,1):
+        if p.get('tc') and not is_valid_tc_kimlik(p['tc']):
+            notices.append(f"{idx}. karşı tarafın T.C. Kimlik No ({p['tc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
     generic_dosya=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext))
     if generic_dosya and not out.get('dosyaTuru'):
         out['dosyaTuru']=generic_dosya
@@ -1157,7 +1187,15 @@ def form_state(form):
     locked_resp=set(int(x) for x in form.getlist('locked_resp') if str(x).isdigit())
     return values,respondents,locked,locked_resp
 
+def _norm_person_name(s):
+    """Karşı taraf isim karşılaştırmasında kullanılan normalizasyon: birden
+    fazla boşluğu tek boşluğa indirger ve casefold uygular. Böylece iki belge
+    arasında OCR/yazım kaynaklı fazladan boşluk gibi ufak farklar aynı kişiyi
+    farklı bir taraf olarak mükerrer eklemez."""
+    return re.sub(r'\s+',' ',(s or '').strip()).casefold()
+
 def merge_state(values,respondents,locked,locked_resp,new_values,new_resp):
+    dropped=0
     for k in values:
         if k not in locked and new_values.get(k):values[k]=new_values[k]
     # Kilitli satırlar korunur; yeni belgede bulunan taraflar boş/unlocked satırlara eklenir.
@@ -1166,23 +1204,24 @@ def merge_state(values,respondents,locked,locked_resp,new_values,new_resp):
         # Aynı isim varsa onunla birleştir.
         if p.get('name'):
             for j,cur in enumerate(respondents):
-                if cur.get('name','').strip().casefold()==p['name'].strip().casefold():target=j;break
+                if _norm_person_name(cur.get('name'))==_norm_person_name(p['name']):target=j;break
         p['type']=('kontrol' if p.get('tax') and p.get('tc') else ('kurum' if p.get('tax') else 'kisi'))
         if target is None:
             for j,cur in enumerate(respondents):
                 if j not in locked_resp and not cur.get('name'):target=j;break
         if target is None and len(respondents)<MAX_RESP:
             respondents.append({f:'' for f in RESP_FIELDS});target=len(respondents)-1
-        if target is None:continue
+        if target is None:
+            dropped+=1;continue
         if target in locked_resp:continue
         for f in RESP_FIELDS:
             if p.get(f):respondents[target][f]=p[f]
-    return values,respondents
+    return values,respondents,dropped
 
 def respondent_body_block(template_text):
     starts=[m.start() for m in re.finditer(r'KARŞI TARAF BİLGİLERİ',template_text,re.I)]
     if not starts:return ''
-    s=starts[0]; e=text.find('Arabuluculuk Konusu Uyuşmazlık',s) if False else template_text.find('Arabuluculuk Konusu Uyuşmazlık',s)
+    s=starts[0]; e=template_text.find('Arabuluculuk Konusu Uyuşmazlık',s)
     return template_text[s:e] if e>s else ''
 
 def fill_respondent_block(block,p):

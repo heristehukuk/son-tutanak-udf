@@ -34,7 +34,21 @@ def case_values(case: dict) -> dict:
     return data
 
 
-def detect_identity_conflicts(case: dict, incoming: dict) -> list[dict]:
+def _respondent_name_map(respondents) -> dict:
+    """Karşı taraf isimlerini normalize edilmiş anahtar -> orijinal görünen
+    ad eşlemesi olarak döndürür. Boş isimler dikkate alınmaz."""
+    out = {}
+    for r in respondents or []:
+        if not isinstance(r, dict):
+            continue
+        raw = str(r.get("name") or "").strip()
+        key = _norm(raw)
+        if key and key not in out:
+            out[key] = raw
+    return out
+
+
+def detect_identity_conflicts(case: dict, incoming: dict, incoming_respondents=None) -> list[dict]:
     """Return only real, two-sided identity conflicts.
 
     Empty values never erase an existing value and never cause a conflict.
@@ -50,6 +64,20 @@ def detect_identity_conflicts(case: dict, incoming: dict) -> list[dict]:
                 "label": label,
                 "old": current.get(key),
                 "new": incoming.get(key),
+            })
+    # Karşı taraf(lar) için de aynı mantık: dosyada zaten isimli karşı taraf(lar)
+    # varsa ve yeni belgede de isimli karşı taraf(lar) varsa, ama iki listede
+    # ORTAK isim yoksa, bu muhtemelen farklı bir dosyanın belgesidir - kullanıcı
+    # onaylamadan sessizce birleştirilmemeli.
+    if incoming_respondents is not None:
+        current_names = _respondent_name_map(current.get("respondents"))
+        incoming_names = _respondent_name_map(incoming_respondents)
+        if current_names and incoming_names and set(current_names).isdisjoint(incoming_names):
+            conflicts.append({
+                "field": "karsiTaraflar",
+                "label": "Karşı Taraf(lar)",
+                "old": ", ".join(current_names.values()),
+                "new": ", ".join(incoming_names.values()),
             })
     return conflicts
 

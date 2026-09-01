@@ -31,7 +31,7 @@ from app.documents.engine import (
     build_meeting_sentence, replace_final_legal_paragraph, fill_general, replace_talep_in_narrative,
     update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template,
     fill_custom_template_tracked, update_offsets_exact,
-    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND,
+    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND, MAX_RESP,
 )
 from app.web import page
 from app.supabase_client import supabase_health
@@ -232,7 +232,7 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
             case=repos.cases.get(cid)
             if not case or case.get("owner_id")!=u["id"]:
                 return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
-            conflicts=detect_identity_conflicts(case,nv)
+            conflicts=detect_identity_conflicts(case,nv,nr)
             if conflicts:
                 # Kullanıcı karar verene kadar HİÇBİR veritabanı kaydı oluşturulmaz.
                 # Belge geçici olarak storage'a kaydedilir, kararı /merge/resolve uygular.
@@ -243,7 +243,9 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
                 return HTMLResponse(render_conflict_page(
                     case,conflicts,nv,nr,base_values,respondents,locked,locked_resp,
                     pending_key,merge_file.filename or "ek belge",kind))
-            values,respondents=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
+            values,respondents,dropped_resp=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
+            if dropped_resp:
+                notices.append(f"{dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle bilgi havuzuna eklenemedi; gerekirse elle ekleyin.")
             save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
             merged_case_data=merge_case_values(case,values,respondents)
             repos.cases.update(cid,{
@@ -258,7 +260,9 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
             from app.folders.service import update_case_folder_name, ensure_case_folders
             ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
         else:
-            values,respondents=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
+            values,respondents,dropped_resp=merge_state(base_values,respondents,locked,locked_resp,nv,nr)
+            if dropped_resp:
+                notices.append(f"{dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle bilgi havuzuna eklenemedi; gerekirse elle ekleyin.")
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
                            notice,custom_templates=list_visible_templates(u["id"]),notices=notices)
         html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
@@ -273,6 +277,15 @@ def render_conflict_page(case,conflicts,nv,nr,base_values,base_respondents,locke
     rows=[]
     for c in conflicts:
         field=c["field"]; label=c["label"]; old=c["old"]; new=c["new"]
+        if field=="karsiTaraflar":
+            # Karşı taraf(lar) yapılandırılmış bir liste olduğu için serbest metin
+            # ile değiştirilemez; yalnızca mevcut ya da yeni taraf listesi seçilebilir.
+            rows.append(f'''<div class="card"><b>{esc(label)}</b>
+            <p class="hint">Mevcut dosyadaki karşı taraf(lar) ile yeni belgedeki karşı taraf(lar) örtüşmüyor. Bu belge muhtemelen farklı bir dosyaya ait olabilir.</p>
+            <label><input type="radio" name="choice_{field}" value="old" checked> Mevcut karşı taraf(lar)ı koru: <b>{esc(old)}</b></label>
+            <label><input type="radio" name="choice_{field}" value="new"> Yeni karşı taraf(lar)ı kullan: <b>{esc(new)}</b></label>
+            </div>''')
+            continue
         rows.append(f'''<div class="card"><b>{esc(label)}</b>
         <label><input type="radio" name="choice_{field}" value="old" checked> Mevcut değeri koru: <b>{esc(old)}</b></label>
         <label><input type="radio" name="choice_{field}" value="new"> Yeni değeri kullan: <b>{esc(new)}</b></label>
@@ -315,6 +328,7 @@ async def merge_resolve(request:Request):
         values,respondents,locked,locked_resp=nv,nr,set(),set(); cid=new_case_id; notice="Belge ayrı bir yeni dosya olarak kaydedildi."
     else:
         if not case:return HTMLResponse("Bağlı dosya bulunamadı.",404)
+        notices=[]
         current=case_values(case); resolved=dict(nv)
         for field in IDENTITY_FIELDS:
             choice=form.get(f"choice_{field}")
@@ -322,7 +336,19 @@ async def merge_resolve(request:Request):
             elif choice=="custom":
                 custom_val=str(form.get(f"custom_{field}") or "").strip()
                 if custom_val: resolved[field]=custom_val
-        values,respondents=merge_state(base_values,base_respondents,locked,locked_resp,resolved,nr)
+        # Karşı taraf(lar) çakışması: "Mevcut değeri koru" seçilirse yeni belgedeki
+        # taraflar bilgi havuzuna hiç eklenmez (mevcut liste korunur). "Yeni değeri
+        # kullan" seçilirse mevcut liste tamamen yeni belgedeki taraflarla
+        # değiştirilir (iki farklı dosyanın taraflarının karışmasını önlemek için).
+        resp_choice=form.get("choice_karsiTaraflar")
+        nr_to_merge=nr
+        if resp_choice=="old":
+            nr_to_merge=[]
+        elif resp_choice=="new":
+            base_respondents=[]; locked_resp=set()
+        values,respondents,dropped_resp=merge_state(base_values,base_respondents,locked,locked_resp,resolved,nr_to_merge)
+        if dropped_resp:
+            notices.append(f"{dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle bilgi havuzuna eklenemedi; gerekirse elle ekleyin.")
         merged_case_data=merge_case_values(case,values,respondents)
         save_document(owner_id,data,filename,kind,cid)
         repos.cases.update(cid,{"file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),"application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),"title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya","file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),"start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),"case_data_json":json.dumps(merged_case_data,ensure_ascii=False),"updated_at":now().isoformat()})
@@ -332,6 +358,11 @@ async def merge_resolve(request:Request):
         try:storage.delete(pending_key)
         except Exception:pass
         values=merged_case_data.copy(); notice="Seçtiğiniz bilgilerle mevcut dosya güncellendi."
+        html=render_editor(filename,values,respondents,locked,locked_resp,notice,custom_templates=list_visible_templates(owner_id),notices=notices)
+        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+        html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
+        return HTMLResponse(html)
+    # action=="separate" dalı buraya düşer.
     html=render_editor(filename,values,respondents,locked,locked_resp,notice,custom_templates=list_visible_templates(owner_id))
     html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
     html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
