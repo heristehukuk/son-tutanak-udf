@@ -720,12 +720,17 @@ def party_values(seg):
     if not name:
         name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
     address=_strip_inline_trailing_label(first([r'Adres\s*[:：][ \t]*([^\n<]{2,400})'],seg))
+    phone=first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：][ \t]*([^\n<]{3,150})'],seg)
+    # Telefon numaralarındaki iç boşlukları normalize et (ör. "0505 446 21 24" -> "05054462124").
+    # Yalnızca rakam ve baştaki '+' korunur; UYAP formlarında telefon serbest metin
+    # olduğu için farklı boşluklu biçimler aynı bilgi havuzunda tutarsız görünebiliyordu.
+    phone_norm=re.sub(r'[^\d+]','',phone) if phone else phone
     return {
         'type':'kurum' if tax and not tc else 'kisi',
         'tc':tc,'tax':tax,'name':turkce_title_case(name),
         'address':turkce_title_case(address),
         'proxy':turkce_title_case(first([r'Vekili\s*[:：][ \t]*([^\n<]{1,250})'],seg)),
-        'phone':first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：][ \t]*([^\n<]{3,150})'],seg),
+        'phone':phone_norm,
         'email':first([r'E-Posta\s+Adresi\s*[:：][ \t]*([^\n<]{3,250})'],seg)
     }
 
@@ -1201,8 +1206,17 @@ def merge_state(values,respondents,locked,locked_resp,new_values,new_resp):
     # Kilitli satırlar korunur; yeni belgede bulunan taraflar boş/unlocked satırlara eklenir.
     for i,p in enumerate(new_resp):
         target=None
+        # Önce TC kimlik/vergi no ile eşleştir; isimdeki küçük yazım farklarına
+        # (nokta, boşluk, unvan kısaltması vb.) karşı isim eşleştirmesinden daha
+        # güvenilirdir. TC/Vergi No yoksa (veya eşleşme bulunamazsa) isimle denenir.
+        p_tc=(p.get('tc') or '').strip(); p_tax=(p.get('tax') or '').strip()
+        if p_tc or p_tax:
+            for j,cur in enumerate(respondents):
+                cur_tc=(cur.get('tc') or '').strip(); cur_tax=(cur.get('tax') or '').strip()
+                if (p_tc and cur_tc and p_tc==cur_tc) or (p_tax and cur_tax and p_tax==cur_tax):
+                    target=j;break
         # Aynı isim varsa onunla birleştir.
-        if p.get('name'):
+        if target is None and p.get('name'):
             for j,cur in enumerate(respondents):
                 if _norm_person_name(cur.get('name'))==_norm_person_name(p['name']):target=j;break
         p['type']=('kontrol' if p.get('tax') and p.get('tc') else ('kurum' if p.get('tax') else 'kisi'))
@@ -1623,6 +1637,22 @@ function setAllSections(open){document.querySelectorAll('details.info-section,de
 function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
 function toggleMeeting(){const s=document.querySelector('select[name=gorusmeSekli]');const f=document.querySelector('textarea[name=gorusmeAdresi]');if(!s||!f)return;f.parentElement.style.display=s.value==='Yüz yüze'?'block':'none';}document.addEventListener('change',e=>{if(e.target.name==='gorusmeSekli')toggleMeeting()});document.addEventListener('DOMContentLoaded',toggleMeeting);</script></body></html>'''
     return html.replace('__FILENAME__',escape(filename)).replace('__NOTICES__',notice_html).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
+
+def inject_case_binding(html, case_id):
+    """render_editor() çıktısını bir case_id'ye bağlar: /build, /merge gibi
+    işlemlerin ilgili dosyayı (case) güncellemesini sağlayan gizli alanı ekler
+    ve dosyayı belge oluşturmadan doğrudan kaydetmek için bir buton ekler."""
+    html = html.replace(
+        '<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
+        '<form id="mainform" action="/build" method="post" enctype="multipart/form-data">'
+        f'<input type="hidden" name="case_id" value="{escape(str(case_id),quote=True)}">',
+        1)
+    html = html.replace(
+        '<button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button>',
+        '<button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button>'
+        f'<button type="submit" formaction="/files/case/{escape(str(case_id),quote=True)}/save" class="secondary">💾 Değişiklikleri Kaydet (belge oluşturmadan)</button>',
+        1)
+    return html
 
 
 def extract_any_source(filename, data):
