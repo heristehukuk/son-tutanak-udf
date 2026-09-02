@@ -478,26 +478,28 @@ def fill_custom_template(text, values, respondents):
         return ''
     return BRACKET_RE.sub(repl, text)
 
+# NOT: Aşağıdaki tüm girdilerde ':' ile değer arasında SADECE '[ \t]*' kullanılır,
+# '\s*' DEĞİL. '\s*' satır sonunu (\n) da yuttuğu için, bir alan boş bırakıldığında
+# (ör. "DOSYA TÜRÜ :" boş, hemen altında "Uyuşmazlık Türü : ...") regex bir sonraki
+# satırdaki başka bir etiketin değerinin tamamını yanlışlıkla yakalayabiliyordu.
+# (party_values() içinde aynı sınıf hata daha önce düzeltilmişti; burada da aynı
+# kural genele yayılmıştır.) Ayrıca, kullanılmayan (party_values() tarafından zaten
+# karşılanan) basvurucuXXX girdileri kaldırıldı; iki ayrı yerde aynı alanın farklı
+# regex'lerle tanımlanması, bir düzeltmenin diğerinde unutulmasına yol açıyordu.
 PATTERNS={
-'basvuruNo':[r'BAŞVURU\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Başvuru\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
-'dosyaNo':[r'DOSYA\s*NO\s*[:：]\s*([^\n<]{1,100})',r'Dosya\s*(?:Numarası|No)\s*[:：]\s*([^\n<]{1,100})'],
-'arabulucuTc':[r'T\.?\s*C\.?\s*(?:KİMLİK\s+NUMARASI|Kimlik\s+No)\s*[:：]\s*(\d{8,20})'],
-'arabulucuSicil':[r'(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：]\s*([^\n<]{1,80})'],
-'arabulucuAdres':[r'(?:ARABULUCU\s+BİLGİLERİ.*?Adresi|ADRESİ|Adresi)\s*[:：]\s*([^\n<]{5,300})'],
-'basvurucuTcKimlik':[r'TC\s+Kimlik\s+No\s*[:：]\s*(\d{8,20})'],
-'basvurucuAdiSoyadi':[r'Adı\s+Soyadı\s*[:：]\s*([^\n<]{2,200})'],
-'basvurucuAdres':[r'Adres\s*[:：]\s*([^\n<]{2,400})'],
-'basvurucuVekili':[r'Vekili\s*[:：]\s*([^\n<]{1,250})'],
-'basvurucuTelefon':[r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：]\s*([^\n<]{3,150})'],
-'basvurucuEposta':[r'E-Posta\s+Adresi\s*[:：]\s*([^\n<]{3,250})'],
-'dosyaTuru':[r'DOSYA\s*T[ÜU]R[ÜU]\s*[:：]\s*([^\n<]{2,300})'],
-'uyusmazlik':[r'Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：]\s*([^\n<]{2,500})',r'Uyuşmazlık\s*(?:Türü|Konusu)?\s*[:：]\s*([^\n<]{2,500})'],
-'talep':[r'Talep(?:ler)?\s*[:：]\s*([^\n<]{2,1000})',r'Talep\s+Konusu\s*[:：]\s*([^\n<]{2,1000})'],
-'baslangicTarihi':[r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
-'bitisTarihi':[r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
-'duzenlemeYeri':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：]\s*([^\n<]{2,120})'],
-'duzenlemeTarihi':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：]\s*([^\n<]{2,80})'],
-'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：]\s*([^\n<]{2,300})']}
+'basvuruNo':[r'BAŞVURU\s*NO\s*[:：][ \t]*([^\n<]{1,100})',r'Başvuru\s*(?:Numarası|No)\s*[:：][ \t]*([^\n<]{1,100})'],
+'dosyaNo':[r'DOSYA\s*NO\s*[:：][ \t]*([^\n<]{1,100})',r'Dosya\s*(?:Numarası|No)\s*[:：][ \t]*([^\n<]{1,100})'],
+'arabulucuTc':[r'T\.?\s*C\.?\s*(?:KİMLİK\s+NUMARASI|Kimlik\s+No)\s*[:：][ \t]*(\d{8,20})'],
+'arabulucuSicil':[r'(?:ARB\.?\s*SİCİL\s+NUMARASI|Arb\.?\s*Sicil\s*No)\s*[:：][ \t]*([^\n<]{1,80})'],
+'arabulucuAdres':[r'(?:ARABULUCU\s+BİLGİLERİ.*?Adresi|ADRESİ|Adresi)\s*[:：][ \t]*([^\n<]{5,300})'],
+'dosyaTuru':[r'DOSYA\s*T[ÜU]R[ÜU]\s*[:：][ \t]*([^\n<]{2,300})'],
+'uyusmazlik':[r'Arabuluculuk\s+Konusu\s+Uyuşmazlık\s*[:：][ \t]*([^\n<]{2,500})',r'Uyuşmazlık\s*(?:Türü|Konusu)?\s*[:：][ \t]*([^\n<]{2,500})'],
+'talep':[r'Talep(?:ler)?\s*[:：][ \t]*([^\n<]{2,1000})',r'Talep\s+Konusu\s*[:：][ \t]*([^\n<]{2,1000})'],
+'baslangicTarihi':[r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih\s*[:：][ \t]*([^\n<]{2,80})'],
+'bitisTarihi':[r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：][ \t]*([^\n<]{2,80})'],
+'duzenlemeYeri':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：][ \t]*([^\n<]{2,120})'],
+'duzenlemeTarihi':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：][ \t]*([^\n<]{2,80})'],
+'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：][ \t]*([^\n<]{2,300})']}
 
 
 def normalize_date_value(value):
@@ -566,6 +568,24 @@ def is_valid_tc_kimlik(tc):
     d10=((odd_sum*7)-even_sum)%10
     d11=sum(digits[:10])%10
     return d10==digits[9] and d11==digits[10]
+
+def is_valid_vkn(vkn):
+    """Vergi Kimlik Numarası (10 hane) için bilinen resmi checksum algoritması.
+    is_valid_tc_kimlik ile aynı amaçla kullanılır: hiçbir alanı bloke etmez,
+    yalnızca 'bu numara OCR/ayrıştırma hatası içeriyor olabilir' uyarısı için."""
+    d=re.sub(r'\D','',vkn or '')
+    if len(d)!=10:
+        return False
+    digits=[int(c) for c in d]
+    total=0
+    for i in range(9):
+        tmp=(digits[i]+9-i)%10
+        v=9 if tmp==0 else (tmp*(2**(9-i)))%9
+        if v==0 and tmp!=0:
+            v=9
+        total+=v
+    check=(10-(total%10))%10
+    return check==digits[9]
 
 
 def extract_dosya_bilgileri_screen(ptext):
@@ -671,12 +691,84 @@ def udf_plain(text):
         if line: lines.append(line)
     return '\n'.join(lines)
 
-def first(patterns,text,flags=re.I):
+# ---------------------------------------------------------------------------
+# BİLİNEN ALAN ETİKETLERİ (merkezi sözlük)
+# Adres/telefon/vergi no vb. etiketler eskiden party_values(), PATTERNS ve
+# extract_dosya_bilgileri_screen() içinde birbirinden bağımsız regex'lerle
+# aranıyordu; bir etiket varyasyonu (ör. "Adres ve Cep(Zorunlu)") bir yerde
+# eklense bile diğerinde unutuluyordu. Ortak varyantlar burada TEK yerde
+# tutulur ve hem party_values() hem de _LABEL_BLEED_RE bundan beslenir.
+# PAREN_ANNOTATION: "(Zorunlu)", "(Cep-Zorunlu)" gibi UYAP formlarında sık
+# görülen açıklama parantezlerini, etiket ile ':' arasında tolere eder.
+# ---------------------------------------------------------------------------
+_PAREN_ANNOTATION = r'(?:\s*\([^)]{0,60}\))?'
+_ADDRESS_LABEL = r'Adres(?:\s+ve\s+Cep)?'
+_PHONE_LABEL = r'(?:Cep\s*Tel(?:efonu)?|İletişim|Telefon(?:\s+Numarası)?)'
+_TAX_LABEL = r'Vergi(?:\s*/\s*Mersis)?(?:\s*/\s*Detsis)?\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası|Mersis\s*No|Detsis\s*No'
+_NAME_LABEL = r'Adı\s+Soyadı|Kurum\s+Adı|Unvanı|Ünvanı|Şirket\s+Unvanı|Firma\s+Adı'
+
+# Bilinen bölüm başlıkları + alan etiketleri: first() bir değeri yakaladığında,
+# bu değer AKTÜEL OLARAK bu etiketlerden biriyle başlıyorsa ("Uyuşmazlık Türü : ..."
+# gibi), bu neredeyse kesin bir "satır sızması" (regex'in boş bir alanı atlayıp
+# bir sonraki etiketin/değerin tamamını yanlışlıkla yakalaması) belirtisidir.
+# NOT: Bu liste kasıtlı olarak SPESİFİK bilinen etiketlerle sınırlı tutulur;
+# genel bir "Büyük Harfli Kelimeler + :" sezgiseli, "... No:5 Ankara" gibi
+# tamamen geçerli adres değerlerinde yanlış pozitif üretir.
+_KNOWN_FIELD_LABELS = [
+    r'Başvuru\s*(?:Numarası|No)', r'Dosya\s*(?:Numarası|No)', r'Dosya\s*T[üu]r[üu]',
+    r'Uyuşmazlık\s*(?:Türü|Konusu)?', r'Arabuluculuk\s+Konusu\s+Uyuşmazlık',
+    r'Talep(?:ler)?', r'Talep\s+Konusu',
+    r'Arabuluculuk\s+Sürecinin\s+Başladığı\s+Tarih', r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih',
+    r'Son\s+Tutanağın\s+Düzenlendiği\s+(?:Yer|Tarih)', r'Arabuluculuk\s+Sonucu',
+    _NAME_LABEL, r'T\.?\s*C\.?\s*Kimlik\s*No(?:su)?', _TAX_LABEL,
+    _ADDRESS_LABEL, r'Vekili', r'Baro\s+Sicil\s+Numarası', _PHONE_LABEL,
+    r'E-Posta(?:\s+Adresi)?',
+    r'BAŞVURU\s+SAHİBİ\s+BİLGİLERİ', r'BAŞVURUCU\s+BİLGİLERİ', r'KARŞI\s+TARAF\s+BİLGİLERİ',
+    r'ARABULUCU\s+BİLGİLERİ', r'BAŞVURU\s+BİLGİLERİ',
+]
+_LABEL_BLEED_RE = re.compile(r'^(?:'+'|'.join(_KNOWN_FIELD_LABELS)+r')'+_PAREN_ANNOTATION+r'\s*[:：]', re.I)
+_KNOWN_LABEL_ONLY_RE = re.compile(r'^(?:'+'|'.join(_KNOWN_FIELD_LABELS)+r')'+_PAREN_ANNOTATION+r'$', re.I)
+
+def find_unmatched_labels(ptext):
+    """DEV/DEBUG amaçlıdır (varsayılan olarak devrede DEĞİLDİR, bkz. extract()
+    içindeki TUTANAK_DEBUG_LABELS kontrolü). Metindeki 'Etiket : değer' biçimli
+    satırlardan, bilinen _KNOWN_FIELD_LABELS listesinde OLMAYAN etiketleri
+    döndürür. Yalnızca ETİKET METNİ toplanır, DEĞER hiçbir zaman toplanmaz;
+    bu yüzden KVKK/gizlilik açısından risksizdir. Amaç: farklı arabuluculuk
+    bürolarının ürettiği yeni form varyasyonlarını (yeni etiket kelimeleri)
+    zaman içinde keşfedip LABEL sözlüğünü genişletebilmektir."""
+    found=[]
+    seen=set()
+    for line in ptext.splitlines():
+        line=line.strip()
+        m=re.match(r'^-?\s*([^\n:：]{2,60}?)\s*[:：]',line)
+        if not m:
+            continue
+        label=m.group(1).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        if not _KNOWN_LABEL_ONLY_RE.match(label) and not re.match(r'^\d',label):
+            found.append(label)
+    return found
+
+
+def first(patterns,text,flags=re.I,notices=None,field_label=None):
+    """İlk eşleşen pattern'in yakaladığı değeri döner. `notices` verilirse ve
+    yakalanan değer bilinen başka bir etikete ait metinle başlıyorsa (satır
+    sızması şüphesi), bu eşleşme reddedilir, sıradaki pattern denenir ve
+    (varsa field_label ile birlikte) notices listesine bir uyarı eklenir."""
     for p in patterns:
         m=re.search(p,text,flags)
         if m:
             v=m.group(1).strip(' \t\r\n:;,-')
-            if v:return v
+            if v:
+                if _LABEL_BLEED_RE.match(v):
+                    if notices is not None:
+                        etiket=f'"{field_label}" alanı' if field_label else 'Bir alan'
+                        notices.append(f'{etiket}, başka bir etikete ait metinle başladığı için ("{v[:40]}...") boş bırakıldı; lütfen elle kontrol edin.')
+                    continue
+                return v
     return ''
 
 def section(text,start_terms,end_terms):
@@ -704,53 +796,90 @@ def _strip_inline_trailing_label(value):
     Telefon, Vekili) karışmasını burada ayıklıyoruz."""
     if not value:
         return value
-    m=re.search(r'\s+(?:Cep\s*Tel|Telefon(?:\s+Numarası)?|Vekili)\s*[:：]',value,re.I)
+    m=re.search(rf'\s+(?:{_PHONE_LABEL}|Vekili)\s*[:：]',value,re.I)
     return value[:m.start()].strip() if m else value
 
-def party_values(seg):
+_PARTY_SUBHEADER_RE = re.compile(r'-\s*(Kişi|Kurum|Şirket|Tüzel\s*Kişi)\s+için', re.I)
+
+def _subheader_type(text):
+    """Bloğun başında '-Kişi İçin' / '-Kurum için' / '-Şirket İçin' gibi bir
+    UYAP alt başlığı varsa, taraf türünü doğrudan bu başlıktan belirler.
+    Bulunamazsa None döner (çağıran, tax/tc varlığına göre eski yönteme düşer).
+    Bu, vergi no regex'i (etiket varyasyonu nedeniyle) eşleşmese bile kurumun
+    yanlışlıkla 'kişi' sayılmasını önler."""
+    m=_PARTY_SUBHEADER_RE.search(text)
+    if not m:
+        return None
+    return 'kisi' if m.group(1).strip().lower()=='kişi' else 'kurum'
+
+def party_values(seg,notices=None):
     # NOT: iki nokta üst üste sonrası [ \t]* kullanılır (\s* DEĞİL); \s* satır
     # sonunu (\n) da yuttuğu için, değer boş bırakılmış bir alanda arama bir
     # sonraki satıra/bölüm başlığına kayıp yanlış veri yakalayabiliyordu
     # (ör. boş "Vekili :" alanının hemen altındaki "BAŞVURU BİLGİLERİ" başlığının
     # vekil adı sanılması gibi).
-    tax=first([r'(?:Vergi\s*(?:Kimlik\s*)?No|VKN|Vergi\s*Numarası)\s*[:：][ \t]*([0-9]{8,20})'],seg)
-    tc=first([r'TC\s+Kimlik\s+No\s*[:：][ \t]*(\d{8,20})'],seg)
-    name=first([r'(?:Adı\s+Soyadı|Unvanı|Ünvanı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
-    # Kurumlarda çoğu başvuru formunda "Şirket Unvanı / Kurum Adı" gibi etiketler kullanılabilir.
-    if not name:
-        name=first([r'(?:Şirket\s+Unvanı|Kurum\s+Adı|Firma\s+Adı)\s*[:：][ \t]*([^\n<]{2,250})'],seg)
-    address=_strip_inline_trailing_label(first([r'Adres\s*[:：][ \t]*([^\n<]{2,400})'],seg))
-    phone=first([r'(?:Cep\s*Tel|Telefon\s+Numarası|Telefon)\s*[:：][ \t]*([^\n<]{3,150})'],seg)
+    tax=first([rf'(?:{_TAX_LABEL})\s*[:：][ \t]*([0-9]{{8,20}})'],seg,notices=notices,field_label='Vergi/Mersis/Detsis No')
+    tc=first([r'T\.?\s*C\.?\s*Kimlik\s*No(?:su)?\s*[:：][ \t]*(\d{8,20})'],seg,notices=notices,field_label='T.C. Kimlik No')
+    name=first([rf'(?:{_NAME_LABEL})\s*[:：][ \t]*([^\n<]{{2,250}})'],seg,notices=notices,field_label='Adı Soyadı/Unvanı')
+    address=_strip_inline_trailing_label(first([rf'{_ADDRESS_LABEL}{_PAREN_ANNOTATION}\s*[:：][ \t]*([^\n<]{{2,400}})'],seg,notices=notices,field_label='Adres'))
+    phone=first([rf'{_PHONE_LABEL}{_PAREN_ANNOTATION}\s*[:：][ \t]*([^\n<]{{3,150}})'],seg,notices=notices,field_label='Telefon')
     # Telefon numaralarındaki iç boşlukları normalize et (ör. "0505 446 21 24" -> "05054462124").
     # Yalnızca rakam ve baştaki '+' korunur; UYAP formlarında telefon serbest metin
     # olduğu için farklı boşluklu biçimler aynı bilgi havuzunda tutarsız görünebiliyordu.
     phone_norm=re.sub(r'[^\d+]','',phone) if phone else phone
+    party_type=_subheader_type(seg) or ('kurum' if tax and not tc else 'kisi')
     return {
-        'type':'kurum' if tax and not tc else 'kisi',
+        'type':party_type,
         'tc':tc,'tax':tax,'name':turkce_title_case(name),
         'address':turkce_title_case(address),
-        'proxy':turkce_title_case(first([r'Vekili\s*[:：][ \t]*([^\n<]{1,250})'],seg)),
+        'proxy':turkce_title_case(first([r'Vekili\s*[:：][ \t]*([^\n<]{1,250})'],seg,notices=notices,field_label='Vekili')),
         'phone':phone_norm,
-        'email':first([r'E-Posta\s+Adresi\s*[:：][ \t]*([^\n<]{3,250})'],seg)
+        'email':first([r'E-Posta(?:\s+Adresi)?\s*[:：][ \t]*([^\n<]{3,250})'],seg,notices=notices,field_label='E-Posta')
     }
 
-def extract_respondents(ptext):
+def extract_respondents(ptext,notices=None):
     seg=section(ptext,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK','TALEP','Arabuluculuk Sürecinin'])
-    # İlk yöntem: tekrar eden "Adı Soyadı" etiketlerine göre bloklara ayır.
-    matches=list(re.finditer(r'Adı\s+Soyadı\s*[:：]',seg,re.I))
+
+    # Yöntem 1 (en güvenilir): UYAP formlarında sık görülen '-Kişi İçin' /
+    # '-Kurum için' / '-Şirket İçin' alt başlıkları varsa, blok sınırlarını
+    # doğrudan bunlardan çıkar. Bu, kurum bloğunun adının "Kurum Adı" yerine
+    # başka bir etiketle yazıldığı durumlarda bile taraf sayısını doğru verir.
+    subheaders=list(_PARTY_SUBHEADER_RE.finditer(seg))
+    if subheaders:
+        starts=[m.start() for m in subheaders]
+        dropped=max(0,len(starts)-MAX_RESP)
+        parties=[]
+        for i,s in enumerate(starts[:MAX_RESP]):
+            e=starts[i+1] if i+1<len(starts) else len(seg)
+            chunk=seg[s:e]
+            pv=party_values(chunk,notices=notices)
+            if pv['name']:
+                parties.append(pv)
+            elif notices is not None:
+                notices.append(f'"{chunk.splitlines()[0].strip()}" alt başlıklı karşı taraf bloğunda ad/unvan tespit edilemedi; lütfen elle kontrol edin.')
+        if parties:
+            return parties,dropped
+
+    # Yöntem 2 (yedek): alt başlık yoksa, gerçek/tüzel kişi ayrımı yapmadan
+    # TÜM bilinen isim/unvan etiketlerine ("Adı Soyadı", "Kurum Adı", "Unvanı",
+    # "Şirket Unvanı", "Firma Adı") göre böl. Eskiden yalnızca "Adı Soyadı"
+    # aranıyordu; bu yüzden kurum karşı taraflar (etiketi "Kurum Adı" olanlar)
+    # hiçbir uyarı üretmeden tamamen atlanıyordu.
+    matches=list(re.finditer(rf'(?:{_NAME_LABEL})\s*[:：]',seg,re.I))
     dropped=max(0,len(matches)-MAX_RESP)
     parties=[]
     for i,m in enumerate(matches[:MAX_RESP]):
-        starts=[seg.rfind('\nTC Kimlik No',0,m.start()),seg.rfind('\nVergi No',0,m.start()),seg.rfind('\nAdı Soyadı',0,m.start())]
+        starts=[seg.rfind('\nTC Kimlik No',0,m.start()),seg.rfind('\nVergi',0,m.start()),
+                seg.rfind('\n-',0,m.start())]+[seg.rfind('\n'+lbl,0,m.start()) for lbl in ('Adı Soyadı','Kurum Adı','Unvanı','Ünvanı','Şirket Unvanı','Firma Adı')]
         a=max([x for x in starts if x>=0] or [max(0,seg.rfind('\n',0,m.start()))])
         b=matches[i+1].start() if i+1<len(matches) else len(seg)
         chunk=seg[a:b]
-        pv=party_values(chunk)
+        pv=party_values(chunk,notices=notices)
         if pv['name']:
             parties.append(pv)
     if parties:return parties,dropped
-    # Tek blok için yedek yöntem.
-    pv=party_values(seg)
+    # Tek blok için son yedek yöntem.
+    pv=party_values(seg,notices=notices)
     return ([pv] if pv['name'] else []),0
 
 def extract(text):
@@ -761,7 +890,7 @@ def extract(text):
     # olduğunu ayırt edemiyordu; render_editor artık bu notices listesini bir uyarı
     # şeridi olarak gösteriyor.
     notices=[]
-    for k in ['basvuruNo','dosyaNo']: out[k]=first(PATTERNS[k],ptext)
+    for k in ['basvuruNo','dosyaNo']: out[k]=first(PATTERNS[k],ptext,notices=notices,field_label=LABELS.get(k,k))
     screen=extract_dosya_bilgileri_screen(ptext)
     for k,v in screen.items():
         if v:
@@ -776,8 +905,8 @@ def extract(text):
     # yazılmaz; profil varsayılanları zaten bu alanları sonradan dolduruyor).
     arbsec=section(ptext,['ARABULUCU BİLGİLERİ'],['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURU SAHİBİ'])
     if arbsec:
-        out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：][ \t]*([^\n<]{2,150})',r'ARABULUCU\s*[:：][ \t]*([^\n<]{2,150})'],arbsec))
-        for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],arbsec)
+        out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：][ \t]*([^\n<]{2,150})',r'ARABULUCU\s*[:：][ \t]*([^\n<]{2,150})'],arbsec,notices=notices,field_label='Arabulucu Adı'))
+        for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],arbsec,notices=notices,field_label=LABELS.get(k,k))
         out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
     else:
         notices.append("Belgede \"Arabulucu Bilgileri\" bölümü bulunamadı; bu alanlar boş bırakıldı (varsa profilinizdeki arabulucu bilgileri otomatik doldurulur).")
@@ -786,11 +915,13 @@ def extract(text):
     applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
     if not applicant:
         notices.append("Belgede \"Başvuru Sahibi Bilgileri\" bölümü bulunamadı; başvurucu alanları boş kalmış olabilir, lütfen kontrol edin.")
-    a=party_values(applicant)
+    a=party_values(applicant,notices=notices)
     out.update({'basvurucuTcKimlik':a['tc'],'basvurucuAdiSoyadi':a['name'],'basvurucuAdres':a['address'],'basvurucuVekili':a['proxy'],'basvurucuTelefon':a['phone'],'basvurucuEposta':a['email'],'basvurucuTarafTuru':a.get('type','kisi'),'basvurucuVergiNo':a.get('tax','')})
     if a['tc'] and not is_valid_tc_kimlik(a['tc']):
         notices.append(f"Başvurucu T.C. Kimlik No ({a['tc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
-    respondents,dropped_resp=extract_respondents(ptext)
+    if a['tax'] and not is_valid_vkn(a['tax']):
+        notices.append(f"Başvurucu Vergi No ({a['tax']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
+    respondents,dropped_resp=extract_respondents(ptext,notices=notices)
     if not respondents:
         notices.append("Belgede \"Karşı Taraf Bilgileri\" bölümü bulunamadı veya taraf adı tespit edilemedi; lütfen karşı taraf bilgilerini elle kontrol edip ekleyin.")
     if dropped_resp:
@@ -798,11 +929,13 @@ def extract(text):
     for idx,p in enumerate(respondents,1):
         if p.get('tc') and not is_valid_tc_kimlik(p['tc']):
             notices.append(f"{idx}. karşı tarafın T.C. Kimlik No ({p['tc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
-    generic_dosya=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext))
+        if p.get('tax') and not is_valid_vkn(p['tax']):
+            notices.append(f"{idx}. karşı tarafın Vergi No ({p['tax']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
+    generic_dosya=normalize_dosya_turu(first(PATTERNS['dosyaTuru'],ptext,notices=notices,field_label='Dosya Türü'))
     if generic_dosya and not out.get('dosyaTuru'):
         out['dosyaTuru']=generic_dosya
     for k in ['uyusmazlik','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']:
-        v=first(PATTERNS[k],ptext)
+        v=first(PATTERNS[k],ptext,notices=notices,field_label=LABELS.get(k,k))
         if v and not out.get(k):
             out[k]=v
     if out.get('duzenlemeYeri'):
@@ -811,6 +944,9 @@ def extract(text):
         out['uyusmazlik']=out['dosyaTuru']
     if out.get('baslangicTarihi'):
         out['baslangicTarihi']=normalize_date_value(out['baslangicTarihi'])
+    if os.environ.get('TUTANAK_DEBUG_LABELS')=='1':
+        for lbl in find_unmatched_labels(ptext):
+            notices.append(f'[DEBUG] Tanınmayan etiket: "{lbl}" (değer loglanmadı; farklı bir UYAP form varyasyonu olabilir, LABEL sözlüğüne eklenmesi değerlendirilebilir)')
     return out,respondents,notices
 
 def make_mapper(a,b):
