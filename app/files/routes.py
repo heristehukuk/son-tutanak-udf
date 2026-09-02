@@ -1,12 +1,16 @@
 from html import escape
+import json
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
-from app.auth.service import require_active_user
+from app.auth.service import require_active_user, now
 from app.database_layer import repos
 from app.web import page
 from app.modules.tasks.storage import document_checklist
 from app.storage import storage
 from app.files.trash_service import soft_delete_case
+from app.files.case_matcher import case_values, get_locked_fields, persist_case_update
+from app.documents.engine import render_editor, form_state, inject_case_binding
+from app.customtemplates.service import list_visible_templates
 router=APIRouter()
 
 STATUS_LABELS={"open":"🟡 Açık","completed":"🟢 Tamamlandı"}
@@ -46,6 +50,7 @@ async def files(request:Request,q:str="",status:str=""):
             <p>Dosya Türü: {r.get("file_type") or "-"}</p>
             <div class="checklist">{check_html}</div>
             <p class="links">
+                <a href="/files/case/{r["id"]}">🗂️ Bilgi Havuzu</a> ·
                 <a href="/tasks/?case_id={r["id"]}">📋 Görevler</a> ·
                 <a href="/calendar">📅 Takvim</a> ·
                 <a href="/folders/case/{r["id"]}">📁 Klasör</a> ·
@@ -101,3 +106,42 @@ async def download_generated(request:Request,doc_id:str):
     filename=f'{r.get("original_template") or "belge"}.{ext}'
     return Response(data,media_type="application/octet-stream",
                     headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
+@router.get("/case/{case_id}",response_class=HTMLResponse)
+async def view_case_pool(request:Request,case_id:str):
+    """Bir dosyanın bilgi havuzunu (case_data_json + karşı taraflar) doğrudan
+    görüntüleyip DÜZENLEYEBİLECEĞİMİZ ekran. Mükerrer dosya tespiti gibi
+    durumlarda kullanıcının 'mevcut dosyaya ekle' derken içeriği görüp
+    güncelleyebilmesi için gereklidir."""
+    u=require_active_user(request.cookies.get("session"))
+    if not u:return HTMLResponse("Giriş yapmalısınız.",401)
+    case=repos.cases.get(case_id)
+    if not case or case.get("owner_id")!=u["id"] or case.get("status")=="deleted":
+        return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",404)
+    values=case_values(case)
+    respondents=values.get("respondents") or []
+    locked=get_locked_fields(case)
+    html=render_editor(case.get("title") or "Dosya",values,respondents,locked,
+                        custom_templates=list_visible_templates(u["id"]))
+    html=inject_case_binding(html,case_id)
+    return HTMLResponse(html)
+
+@router.post("/case/{case_id}/save")
+async def save_case_pool(request:Request,case_id:str):
+    """Bilgi havuzu ekranındaki '💾 Değişiklikleri Kaydet' butonu: formdaki
+    alanları, belge üretmeden doğrudan bu dosyanın case_data_json'una yazar."""
+    u=require_active_user(request.cookies.get("session"))
+    if not u:return HTMLResponse("Giriş yapmalısınız.",401)
+    case=repos.cases.get(case_id)
+    if not case or case.get("owner_id")!=u["id"] or case.get("status")=="deleted":
+        return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",404)
+    form=await request.form()
+    values,respondents,locked,locked_resp=form_state(form)
+    values["respondents"]=respondents
+    persist_case_update(case_id,case,values,locked=locked | get_locked_fields(case),actor_id=u["id"])
+    from app.folders.service import update_case_folder_name, ensure_case_folders
+    ensure_case_folders(u["id"],case_id); update_case_folder_name(u["id"],case_id)
+    html=render_editor(case.get("title") or "Dosya",values,respondents,locked,locked_resp,
+                        "Değişiklikler kaydedildi.",custom_templates=list_visible_templates(u["id"]))
+    html=inject_case_binding(html,case_id)
+    return HTMLResponse(html)
