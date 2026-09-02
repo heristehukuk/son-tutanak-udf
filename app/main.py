@@ -1,6 +1,6 @@
 import os
 
-import io, os, re, json, urllib.parse, zipfile
+import io, os, re, json, urllib.parse, zipfile, logging
 from uuid import uuid4
 import pytesseract
 from pathlib import Path
@@ -23,7 +23,7 @@ from app.auth.security import hash_password
 from app.files.pending_service import create_pending, get_pending_for_user, cleanup_expired_pending_merges, serialize_row
 from app.plans.service import seed_plans, get_plan, feature_enabled, consume
 from app.files.service import save_document, create_case, save_generated
-from app.files.case_matcher import detect_identity_conflicts, merge_case_values, case_values, IDENTITY_FIELDS
+from app.files.case_matcher import detect_identity_conflicts, merge_case_values, case_values, find_duplicate_case, get_locked_fields, persist_case_update, IDENTITY_FIELDS
 from app.customtemplates.service import list_visible_templates, get_template, can_use_template, get_template_bytes
 from app.documents.engine import (
     read_udf, extract, render_editor, form_state, merge_state, template_bytes, TEMPLATES,
@@ -31,7 +31,7 @@ from app.documents.engine import (
     build_meeting_sentence, replace_final_legal_paragraph, fill_general, replace_talep_in_narrative,
     update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template,
     fill_custom_template_tracked, update_offsets_exact,
-    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND, MAX_RESP,
+    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND, MAX_RESP, inject_case_binding,
 )
 from app.web import page
 from app.supabase_client import supabase_health
@@ -39,6 +39,7 @@ from app.modules.calendar.router import router as calendar_router
 from app.modules.tasks.router import router as tasks_router
 from app.folders.routes import router as folders_router
 app=FastAPI(title="Son Tutanak UDF Asistanı v17")
+logger = logging.getLogger(__name__)
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
 app.include_router(admin_router,prefix="/admin")
@@ -158,11 +159,23 @@ async def edit(request:Request,file:UploadFile=File(...)):
         # Profildeki arabulucu bilgileri yalnızca bilgi havuzunda boş kalan alanlara
         # başlangıç değeri olarak gelir; kaynak belgeden gelen gerçek dosya verileri ezilmez.
         values=apply_mediator_profile_defaults(u, values)
+        # Mükerrer dosya kontrolü: aynı dosya no/başvuru no'ya sahip, silinmemiş bir
+        # dosyanız zaten varsa otomatik olarak İKİNCİ bir case OLUŞTURULMAZ; kullanıcıya
+        # "mevcut dosyaya mı eklensin, ayrı mı kalsın" seçimi sunulur. Karar verilene kadar
+        # hiçbir veritabanı kaydı oluşturulmaz (mevcut çakışma-çözümleme mimarisiyle aynı ilke).
+        existing_case=find_duplicate_case(u["id"], values)
+        if existing_case:
+            ext_suffix=Path(file.filename or "kaynak").suffix.lower() or ".bin"
+            pending_key=f"pending/{uuid4()}{ext_suffix}"
+            storage.save(pending_key,data)
+            existing_values=case_values(existing_case)
+            create_pending(u["id"], existing_case["id"], pending_key, file.filename or "kaynak belge", kind,
+                            values, respondents, existing_values, existing_values.get("respondents") or [], set(), set(), [])
+            return HTMLResponse(render_duplicate_case_page(existing_case,file.filename or "kaynak belge",pending_key))
         cid=create_case(u["id"],values.get("dosyaNo"),values.get("basvuruNo"),values.get("basvurucuAdiSoyadi") or "Yeni Dosya",values.get("dosyaTuru"))
         save_document(u["id"],data,file.filename or "kaynak",kind,cid)
         html=render_editor(file.filename or "Kaynak Belge",values,respondents,custom_templates=list_visible_templates(u["id"]),notices=notices)
-        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
-                           f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+        html=inject_case_binding(html,cid)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge okunamadı: {e}",400)
@@ -195,8 +208,7 @@ async def schedule_case(request:Request):
         html=render_editor("Bilgi Havuzu",values,respondents,locked,locked_resp,
             "Takvime eklemek için şu alanlar eksik/geçersiz: "+", ".join(missing)+". Doldurup tekrar deneyin.",
             custom_templates=list_visible_templates(u["id"]))
-        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
-                           f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+        html=inject_case_binding(html,cid)
         return HTMLResponse(html,400)
     from app.modules.calendar.service import CalendarService
     result=CalendarService().add_case(u["id"],dosya_no,basvurucu,dosya_turu,start,main_case_id=cid,case_data=values)
@@ -232,6 +244,9 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
             case=repos.cases.get(cid)
             if not case or case.get("owner_id")!=u["id"]:
                 return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
+            # Bu case için daha önce kalıcı olarak kilitlenmiş alanlar, bu istekte
+            # checkbox işaretlenmemiş olsa bile korunmaya devam etsin.
+            locked=locked | get_locked_fields(case)
             conflicts=detect_identity_conflicts(case,nv,nr)
             if conflicts:
                 # Kullanıcı karar verene kadar HİÇBİR veritabanı kaydı oluşturulmaz.
@@ -248,14 +263,7 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
                 notices.append(f"{dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle bilgi havuzuna eklenemedi; gerekirse elle ekleyin.")
             save_document(u["id"],data,merge_file.filename or "ek belge",kind,cid)
             merged_case_data=merge_case_values(case,values,respondents)
-            repos.cases.update(cid,{
-                "file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),
-                "application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),
-                "title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
-                "file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),
-                "start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),
-                "case_data_json":json.dumps(merged_case_data,ensure_ascii=False),
-                "updated_at":now().isoformat()})
+            persist_case_update(cid,case,merged_case_data,locked=locked,actor_id=u["id"])
             values=merged_case_data.copy()
             from app.folders.service import update_case_folder_name, ensure_case_folders
             ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
@@ -265,12 +273,28 @@ async def merge(request:Request,merge_file:UploadFile=File(...)):
                 notices.append(f"{dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle bilgi havuzuna eklenemedi; gerekirse elle ekleyin.")
         html=render_editor(merge_file.filename or "Birleştirilmiş Bilgi Havuzu",values,respondents,locked,locked_resp,
                            notice,custom_templates=list_visible_templates(u["id"]),notices=notices)
-        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',
-                          f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+        html=inject_case_binding(html,cid)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     except Exception as e:return HTMLResponse(f"Belge bilgi havuzuna eklenemedi: {e}",400)
 
+
+def render_duplicate_case_page(case,filename,pending_key):
+    from html import escape as esc
+    cid=case.get("id")
+    label=case.get("file_no") or case.get("application_no") or case.get("title") or ""
+    return f'''<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mükerrer Dosya Uyarısı</title>
+<style>body{{font-family:Arial,sans-serif;background:#f3f6f9;margin:0;color:#20252b}}.wrap{{max-width:720px;margin:30px auto;padding:0 16px}}.card{{background:#fff;border-radius:14px;padding:18px;margin:12px 0;box-shadow:0 4px 16px #0001}}button{{border:0;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;margin:6px 8px 0 0;font-size:15px}}.primary{{background:#1769e0;color:#fff}}.secondary{{background:#44515f;color:#fff}}.warn{{background:#fff7ed;border:1px solid #fdba74;border-radius:12px;padding:14px;margin:14px 0}}a{{color:#1769e0}}</style></head><body><div class="wrap">
+<h1>📁 Bu Numaralı Bir Dosyanız Zaten Var</h1>
+<div class="warn">Yüklediğiniz <b>{esc(filename)}</b> belgesindeki dosya/başvuru numarası, sistemde kayıtlı <b>{esc(label)}</b> numaralı dosyayla eşleşiyor. Karar verene kadar bu belge hiçbir yere kaydedilmedi.</div>
+<div class="card">
+<p><a href="/files/case/{esc(cid)}" target="_blank">🗂️ Mevcut dosyanın bilgi havuzunu görüntüle / düzenle (yeni sekmede açılır)</a></p>
+<form method="post" action="/merge/resolve">
+<input type="hidden" name="pending_key" value="{esc(pending_key)}">
+<button class="primary" type="submit" name="action" value="merge">✓ Mevcut Dosyaya Ekle</button>
+<button class="secondary" type="submit" name="action" value="separate">📁 Yine de Ayrı Yeni Dosya Oluştur</button>
+</form></div></div></body></html>'''
 
 def render_conflict_page(case,conflicts,nv,nr,base_values,base_respondents,locked,locked_resp,pending_key,filename,kind):
     from html import escape as esc
@@ -329,6 +353,9 @@ async def merge_resolve(request:Request):
     else:
         if not case:return HTMLResponse("Bağlı dosya bulunamadı.",404)
         notices=[]
+        # Bu case için daha önce kalıcı olarak kilitlenmiş alanlar (pending kayıt
+        # oluşturulduğundan bu yana eklenmiş olabilecekler dahil) korunmaya devam etsin.
+        locked=locked | get_locked_fields(case)
         current=case_values(case); resolved=dict(nv)
         for field in IDENTITY_FIELDS:
             choice=form.get(f"choice_{field}")
@@ -351,7 +378,7 @@ async def merge_resolve(request:Request):
             notices.append(f"{dropped_resp} karşı taraf, en fazla {MAX_RESP} karşı taraf sınırı nedeniyle bilgi havuzuna eklenemedi; gerekirse elle ekleyin.")
         merged_case_data=merge_case_values(case,values,respondents)
         save_document(owner_id,data,filename,kind,cid)
-        repos.cases.update(cid,{"file_no":merged_case_data.get("dosyaNo") or case.get("file_no"),"application_no":merged_case_data.get("basvuruNo") or case.get("application_no"),"title":merged_case_data.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya","file_type":merged_case_data.get("dosyaTuru") or case.get("file_type"),"start_date":merged_case_data.get("baslangicTarihi") or case.get("start_date"),"case_data_json":json.dumps(merged_case_data,ensure_ascii=False),"updated_at":now().isoformat()})
+        persist_case_update(cid,case,merged_case_data,locked=locked,actor_id=u["id"])
         from app.folders.service import update_case_folder_name, ensure_case_folders
         ensure_case_folders(owner_id,cid); update_case_folder_name(owner_id,cid)
         repos.pending_merges.update(row["id"],{"status":"resolved","resolved_at":now().isoformat(),"resolved_by":u["id"]})
@@ -359,12 +386,12 @@ async def merge_resolve(request:Request):
         except Exception:pass
         values=merged_case_data.copy(); notice="Seçtiğiniz bilgilerle mevcut dosya güncellendi."
         html=render_editor(filename,values,respondents,locked,locked_resp,notice,custom_templates=list_visible_templates(owner_id),notices=notices)
-        html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+        html=inject_case_binding(html,cid)
         html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
         return HTMLResponse(html)
     # action=="separate" dalı buraya düşer.
     html=render_editor(filename,values,respondents,locked,locked_resp,notice,custom_templates=list_visible_templates(owner_id))
-    html=html.replace('<form id="mainform" action="/build" method="post" enctype="multipart/form-data">',f'<form id="mainform" action="/build" method="post" enctype="multipart/form-data"><input type="hidden" name="case_id" value="{cid}">',1)
+    html=inject_case_binding(html,cid)
     html=html.replace('name="merge_file" accept=".udf"','name="merge_file" accept=".udf,.pdf,.jpg,.jpeg,.png"')
     return HTMLResponse(html)
 
@@ -441,14 +468,7 @@ async def build(request:Request):
                     template_label="Davet Mektubu"
                     for role,filename,davet_result in davet_outputs:
                         save_generated(u["id"],cid,davet_result,f"{template_label} - {role}",doc_kind="davet_mektubu")
-                    repos.cases.update(cid,{
-                        "file_no":values.get("dosyaNo") or case.get("file_no"),
-                        "application_no":values.get("basvuruNo") or case.get("application_no"),
-                        "title":values.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
-                        "file_type":values.get("dosyaTuru") or case.get("file_type"),
-                        "start_date":values.get("baslangicTarihi") or case.get("start_date"),
-                        "case_data_json":json.dumps(values,ensure_ascii=False),
-                        "updated_at":now().isoformat()})
+                    persist_case_update(cid,case,values,locked=locked | get_locked_fields(case),actor_id=u["id"])
                     from app.folders.service import update_case_folder_name, ensure_case_folders
                     ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
             # Çoklu UDF'leri tek indirmede koruyarak gönder.
@@ -496,12 +516,7 @@ async def build(request:Request):
             save_generated(u["id"],cid,result,template_label,doc_kind=doc_kind)
             case=repos.cases.get(cid)
             if case and case["owner_id"]==u["id"]:
-                repos.cases.update(cid,{"file_no":values.get("dosyaNo") or case.get("file_no"),"application_no":values.get("basvuruNo") or case.get("application_no"),
-                                        "title":values.get("basvurucuAdiSoyadi") or case.get("title") or "Dosya",
-                                        "file_type":values.get("dosyaTuru") or case.get("file_type"),
-                                        "start_date":values.get("baslangicTarihi") or case.get("start_date"),
-                                        "case_data_json":json.dumps(values,ensure_ascii=False),
-                                        "updated_at":now().isoformat()})
+                persist_case_update(cid,case,values,locked=locked | get_locked_fields(case),actor_id=u["id"])
                 from app.folders.service import update_case_folder_name, ensure_case_folders
                 ensure_case_folders(u["id"], cid); update_case_folder_name(u["id"], cid)
         name=re.sub(r'[^A-Za-z0-9ÇĞİÖŞÜçğıöşü _-]','_',source_name)+"_hazir.udf"
