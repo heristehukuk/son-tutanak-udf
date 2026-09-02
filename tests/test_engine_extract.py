@@ -171,5 +171,130 @@ class MergeStateTests(unittest.TestCase):
         self.assertEqual(merged[0]["address"], "Yeni Adres")
 
 
+class KurumKarsiTarafTests(unittest.TestCase):
+    """Regresyon: 2026-09 tarihli bir incelemede, birden fazla karşı tarafın
+    (biri kurum, biri kişi) '-Kurum için' / '-Kişi İçin' alt başlıklarıyla
+    ayrıldığı gerçek bir formda, kurum bloğu ('Kurum Adı' etiketiyle) tamamen
+    sessizce atlanıyordu (yalnızca 'Adı Soyadı' etiketine göre bölünüyordu)."""
+
+    SAMPLE = """
+BAŞVURU SAHİBİ BİLGİLERİ
+-Kişi İçin
+Adı Soyadı : Örnek Başvurucu
+TC Kimlik No : 12345678901
+Adres ve Cep(Zorunlu) : Örnek Mahalle No:1 Çankaya/Ankara
+Cep Telefonu(Zorunlu) : 0532 111 2233
+
+KARŞI TARAF BİLGİLERİ
+-Kurum için
+Kurum Adı : Örnek İnşaat Ticaret A.Ş.
+Vergi/Mersis/Detsis No : 1234567890
+Adres ve Cep(Zorunlu) : Örnek Cadde No:2 Çankaya/Ankara
+İletişim (Cep-Zorunlu) : 05321234567
+-Kişi İçin
+Adı Soyadı : Örnek Karşı Taraf
+TC Kimlik No : 98765432109
+Adres ve Cep(Zorunlu) : Örnek Sokak No:3 Çankaya/Ankara
+
+BAŞVURU BİLGİLERİ
+Dosya Türü :
+Uyuşmazlık Türü : Örnek uyuşmazlık açıklaması metni.
+"""
+
+    def test_kurum_karsi_taraf_atlanmamali(self):
+        values, respondents, notices = extract(self.SAMPLE)
+        self.assertEqual(len(respondents), 2, "Kurum ve kişi karşı taraflar birlikte tespit edilmeli")
+
+    def test_kurum_bloğu_dogru_alanlarla_okunmali(self):
+        values, respondents, notices = extract(self.SAMPLE)
+        kurum = next(r for r in respondents if r["name"].startswith("Örnek İnşaat"))
+        self.assertEqual(kurum["type"], "kurum")
+        self.assertEqual(kurum["tax"], "1234567890")
+        self.assertIn("Örnek Cadde", kurum["address"])
+        self.assertEqual(kurum["phone"], "05321234567")
+
+    def test_kisi_blogu_dogru_alanlarla_okunmali(self):
+        values, respondents, notices = extract(self.SAMPLE)
+        kisi = next(r for r in respondents if r["name"].startswith("Örnek Karşı"))
+        self.assertEqual(kisi["type"], "kisi")
+        self.assertEqual(kisi["tc"], "98765432109")
+
+    def test_basvurucu_birlesik_adres_cep_etiketi_okunmali(self):
+        values, respondents, notices = extract(self.SAMPLE)
+        self.assertIn("Örnek Mahalle", values["basvurucuAdres"])
+        self.assertEqual(values["basvurucuTelefon"], "05321112233")
+
+    def test_bos_dosya_turu_sonraki_alani_calmamali(self):
+        """Regresyon: 'Dosya Türü :' boş bırakıldığında, eski PATTERNS
+        sözlüğündeki '\\s*' regex'i bir sonraki satırdaki 'Uyuşmazlık Türü'
+        değerinin tamamını 'Dosya Türü' alanına yanlışlıkla yazıyordu."""
+        values, respondents, notices = extract(self.SAMPLE)
+        self.assertNotIn("Uyuşmazlık Türü", values.get("dosyaTuru", ""))
+        self.assertEqual(values["uyusmazlikTuru"], "Örnek uyuşmazlık açıklaması metni.")
+
+
+class LabelBleedTests(unittest.TestCase):
+    """first() içindeki _LABEL_BLEED_RE korumasının genel davranışını test eder."""
+
+    def test_bilinen_etiketle_baslayan_deger_reddedilir(self):
+        from app.documents.engine import first
+
+        text = "Talep :\nUyuşmazlık Türü : Gerçek değer burada.\n"
+        # 'Talep' boş olduğu için first(), 'Uyuşmazlık Türü :' ile başlayan bir
+        # sonraki satırı YANLIŞLIKLA yakalarsa bile bunu reddetmeli.
+        v = first([r"Talep\s*[:：]\s*([^\n<]{2,200})"], text)
+        self.assertEqual(v, "", "Bilinen bir etiketle başlayan sızıntı değeri kabul edilmemeli")
+
+    def test_gecerli_adres_no_ile_yanlis_reddedilmez(self):
+        """Yanlış pozitif kontrolü: 'No:5' gibi adres içeriği, genel bir
+        'Büyük harf + :' sezgiseli kullanılsaydı yanlışlıkla etiket sanılabilirdi."""
+        from app.documents.engine import party_values
+
+        seg = "Adı Soyadı : Test Kişi\nAdres : Çankaya Mahallesi Atatürk Bulvarı No:5 Ankara\n"
+        pv = party_values(seg)
+        self.assertIn("No:5", pv["address"])
+
+
+class VknChecksumTests(unittest.TestCase):
+    """is_valid_vkn() algoritmasının kendi içinde tutarlı çalıştığını doğrular
+    (bir değişiklik algoritmayı yanlışlıkla bozarsa regresyonu yakalar)."""
+
+    def test_bozuk_vkn_reddedilir(self):
+        from app.documents.engine import is_valid_vkn
+
+        self.assertFalse(is_valid_vkn("123456789"))  # 9 hane, eksik
+        self.assertFalse(is_valid_vkn("12345678901"))  # 11 hane, fazla
+        self.assertFalse(is_valid_vkn("1111111111"))  # kontrol basamağı tutmuyor
+
+    def test_kontrol_basamagi_tutan_vkn_kabul_edilir(self):
+        from app.documents.engine import is_valid_vkn
+
+        # Algoritmanın kendisiyle üretilmiş, kontrol basamağı doğru bir örnek.
+        base = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        total = 0
+        for i in range(9):
+            tmp = (base[i] + 9 - i) % 10
+            v = 9 if tmp == 0 else (tmp * (2 ** (9 - i))) % 9
+            if v == 0 and tmp != 0:
+                v = 9
+            total += v
+        check = (10 - (total % 10)) % 10
+        vkn = "".join(str(d) for d in base) + str(check)
+        self.assertTrue(is_valid_vkn(vkn))
+
+
+class SubheaderTypeTests(unittest.TestCase):
+    """Taraf türü artık öncelikle '-Kişi İçin' / '-Kurum için' alt başlığından
+    belirleniyor; vergi no regex'i etiket varyasyonu nedeniyle eşleşmese bile
+    kurum yanlışlıkla 'kişi' sayılmamalı."""
+
+    def test_vergi_no_etiketi_taninmasa_bile_kurum_dogru_tespit_edilir(self):
+        from app.documents.engine import party_values
+
+        seg = "-Kurum için\nKurum Adı : Tanınmayan Etiketli Şirket\nBilinmeyen Vergi Etiketi : 1234567890\n"
+        pv = party_values(seg)
+        self.assertEqual(pv["type"], "kurum")
+
+
 if __name__ == "__main__":
     unittest.main()
