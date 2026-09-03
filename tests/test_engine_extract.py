@@ -67,9 +67,11 @@ Dava Türü : [Örnek Dava Türü]
         self.assertEqual(values["arabulucuTc"], "", "Arabulucu bölümü yokken arabulucuTc dolu olmamalı")
         self.assertEqual(values["arabulucuSicil"], "")
         self.assertEqual(values["arabulucuAdres"], "")
-        self.assertTrue(
+        # NOT: Arabulucu bilgileri normalde belgede bulunmaz (profilden gelir),
+        # bu yüzden bunun için artık BİLEREK bir uyarı üretilmiyor - bkz. engine.py.
+        self.assertFalse(
             any("Arabulucu Bilgileri" in n for n in notices),
-            "Arabulucu bölümü bulunamadığına dair bir uyarı üretilmeli",
+            "Arabulucu bölümü için artık uyarı üretilmemeli (beklenen/normal durum)",
         )
 
     def test_bos_vekili_sonraki_basligi_yakalamamali(self):
