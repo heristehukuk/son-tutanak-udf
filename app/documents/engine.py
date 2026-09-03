@@ -908,8 +908,13 @@ def extract(text):
         out['arabulucuAdi']=turkce_title_case(first([r'Adı\s+Soyadı\s*[:：][ \t]*([^\n<]{2,150})',r'ARABULUCU\s*[:：][ \t]*([^\n<]{2,150})'],arbsec,notices=notices,field_label='Arabulucu Adı'))
         for k in ['arabulucuTc','arabulucuSicil','arabulucuAdres']: out[k]=first(PATTERNS[k],arbsec,notices=notices,field_label=LABELS.get(k,k))
         out['arabulucuAdres']=turkce_title_case(out['arabulucuAdres'])
-    else:
-        notices.append("Belgede \"Arabulucu Bilgileri\" bölümü bulunamadı; bu alanlar boş bırakıldı (varsa profilinizdeki arabulucu bilgileri otomatik doldurulur).")
+    # NOT: Arabulucu bilgileri bu belgelerde ZATEN normal şartlarda bulunmuyor -
+    # arabulucu, arabulucunun kendi PROFİLİNDEN otomatik dolduruluyor (bkz.
+    # apply_mediator_profile_defaults, main.py). Bu yüzden "Arabulucu Bilgileri
+    # bölümü bulunamadı" uyarısı burada BİLEREK üretilmiyor; bu, gerçek bir
+    # ayrıştırma sorunu değil, beklenen/normal bir durumdur. (Başvurucu ve Karşı
+    # Taraf bölümleri için aynı durum geçerli DEĞİL - onlar gerçekten belgeden
+    # gelmesi gereken veriler olduğu için ilgili uyarılar aşağıda korunuyor.)
     if out.get('arabulucuTc') and not is_valid_tc_kimlik(out['arabulucuTc']):
         notices.append(f"Arabulucu T.C. Kimlik No ({out['arabulucuTc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
     applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
