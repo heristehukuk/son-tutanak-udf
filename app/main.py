@@ -433,6 +433,12 @@ async def build(request:Request):
     if not u:return RedirectResponse("/auth/login",303)
     try:
         form=await request.form(); values,respondents,locked,locked_resp=form_state(form); choice=str(form.get("template_choice",""))
+        # "Bu tarafı tutanağa dahil etme" işaretlenen taraflar bilgi havuzunda
+        # (ve /build sonrası ekranda) kalmaya devam eder, ancak üretilecek
+        # belgeye YAZILMAZ. Bu yüzden şablon/bracket fonksiyonlarına yalnızca
+        # hariç tutulmamış taraflar geçirilir; `respondents` (tam liste) diğer
+        # amaçlar (ör. ekranda yeniden gösterme) için değişmeden kalır.
+        respondents_for_doc=[r for r in respondents if not r.get("exclude")]
         plan=get_plan(u["plan_id"])
         if not feature_enabled(plan,"documents.udf"):return HTMLResponse("Planınız UDF oluşturmayı desteklemiyor.",403)
         if not consume(u["id"],"udf",plan["limits"].get("udf.monthly")):return HTMLResponse("Aylık UDF oluşturma limitiniz dolmuştur.",429)
@@ -460,7 +466,7 @@ async def build(request:Request):
         xml,old,files=read_udf(data)
         # Davet mektubu özel akışı: tek belge yerine başvurucu ve her karşı taraf için ayrı UDF.
         if doc_kind == "davet_mektubu":
-            davet_outputs=_build_davet_outputs(data,values,respondents,u)
+            davet_outputs=_build_davet_outputs(data,values,respondents_for_doc,u)
             cid=str(form.get("case_id") or "")
             if cid:
                 case=repos.cases.get(cid)
@@ -492,7 +498,7 @@ async def build(request:Request):
             if recognized:is_bracket_template=True
         if is_bracket_template:
             values["_userIban"]=u["iban"] or ""
-            new,edits=fill_custom_template_tracked(old,values,respondents)
+            new,edits=fill_custom_template_tracked(old,values,respondents_for_doc)
             xml=update_offsets_exact(xml,edits,len(old),len(new))
             result=build_udf(files,xml,old,new)
         else:
@@ -502,8 +508,8 @@ async def build(request:Request):
                        "proxy":values.get("basvurucuVekili",""),"phone":values.get("basvurucuTelefon",""),
                        "email":values.get("basvurucuEposta","")}
             arb={"name":values.get("arabulucuAdi",""),"sicil":values.get("arabulucuSicil","")}
-            new=set_parties_and_signatures(old,applicant,respondents,arb)
-            new=replace_meeting_paragraph(new,build_meeting_sentence(values,{**applicant,"_arb_name":arb["name"]},respondents))
+            new=set_parties_and_signatures(old,applicant,respondents_for_doc,arb)
+            new=replace_meeting_paragraph(new,build_meeting_sentence(values,{**applicant,"_arb_name":arb["name"]},respondents_for_doc))
             new=replace_final_legal_paragraph(new,values); new=fill_general(new,values)
             if values.get("talep"):new=replace_talep_in_narrative(new,values["talep"])
             xml=update_offsets(xml,old,new)
