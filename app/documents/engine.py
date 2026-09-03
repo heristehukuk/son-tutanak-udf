@@ -801,6 +801,17 @@ def _strip_inline_trailing_label(value):
 
 _PARTY_SUBHEADER_RE = re.compile(r'-\s*(Kişi|Kurum|Şirket|Tüzel\s*Kişi)\s+için', re.I)
 
+_COMPANY_NAME_RE = re.compile(
+    r'\b(?:A\.?\s*Ş\.?|Anonim\s+Şirket\w*|Ltd\.?\s*Şti\.?|Limited\s+Şirket\w*|'
+    r'Şirket(?:i|imiz)?|Kooperatif\w*|Holding\w*|San(?:ayi)?\.?\s*(?:ve\s*)?Tic(?:aret)?\.?)\b',
+    re.IGNORECASE)
+
+def _is_company_name(name):
+    """Adı/unvanı alanında 'A.Ş.', 'Şti', 'Limited Şirketi' gibi tüzel kişi
+    ibareleri geçiyorsa True döner; vergi no alanı boş/okunamamış olsa bile
+    tarafın 'kurum' olarak sınıflandırılmasını sağlamak için kullanılır."""
+    return bool(name and _COMPANY_NAME_RE.search(name))
+
 def _subheader_type(text):
     """Bloğun başında '-Kişi İçin' / '-Kurum için' / '-Şirket İçin' gibi bir
     UYAP alt başlığı varsa, taraf türünü doğrudan bu başlıktan belirler.
@@ -811,6 +822,21 @@ def _subheader_type(text):
     if not m:
         return None
     return 'kisi' if m.group(1).strip().lower()=='kişi' else 'kurum'
+
+def _normalize_phone(phone):
+    """Bir telefon alanında '-' , ',' veya '/' ile ayrılmış birden fazla numara
+    olabilir (ör. "05077045252 -05327205414 -05550516564"). Her parçayı ayrı ayrı
+    yalnızca rakam+baştaki '+' kalacak şekilde temizleyip aralarına '- ' koyarak
+    geri birleştiriyoruz; aksi halde tüm numaralar tek bir okunaksız rakam
+    yığınında birleşiyordu."""
+    if not phone:
+        return phone
+    parts=[p for p in re.split(r'[-/,;]+',phone) if p.strip()]
+    if not parts:
+        return phone
+    cleaned=[re.sub(r'[^\d+]','',p) for p in parts]
+    cleaned=[c for c in cleaned if c]
+    return '- '.join(cleaned) if cleaned else phone
 
 def party_values(seg,notices=None):
     # NOT: iki nokta üst üste sonrası [ \t]* kullanılır (\s* DEĞİL); \s* satır
@@ -826,8 +852,12 @@ def party_values(seg,notices=None):
     # Telefon numaralarındaki iç boşlukları normalize et (ör. "0505 446 21 24" -> "05054462124").
     # Yalnızca rakam ve baştaki '+' korunur; UYAP formlarında telefon serbest metin
     # olduğu için farklı boşluklu biçimler aynı bilgi havuzunda tutarsız görünebiliyordu.
-    phone_norm=re.sub(r'[^\d+]','',phone) if phone else phone
-    party_type=_subheader_type(seg) or ('kurum' if tax and not tc else 'kisi')
+    # Bazı belgelerde birden fazla telefon numarası '-' ile ayrılmış tek bir alanda
+    # gelir (ör. "05077045252 -05327205414 -05550516564"); bunları tek bir rakam
+    # yığınına birleştirmek yerine, her numarayı ayrı ayrı normalize edip aralarına
+    # "- " koyarak okunur biçimde geri birleştiriyoruz.
+    phone_norm=_normalize_phone(phone) if phone else phone
+    party_type=_subheader_type(seg) or ('kurum' if tax and not tc else None) or ('kurum' if _is_company_name(name) else 'kisi')
     return {
         'type':party_type,
         'tc':tc,'tax':tax,'name':turkce_title_case(name),
@@ -838,7 +868,7 @@ def party_values(seg,notices=None):
     }
 
 def extract_respondents(ptext,notices=None):
-    seg=section(ptext,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK','TALEP','Arabuluculuk Sürecinin'])
+    seg=section(ptext,['KARŞI TARAF BİLGİLERİ','KARŞI TARAF','DİĞER TARAF BİLGİLERİ','DİĞER TARAF'],['Arabuluculuk Konusu Uyuşmazlık','UYUŞMAZLIK','TALEP','Arabuluculuk Sürecinin'])
 
     # Yöntem 1 (en güvenilir): UYAP formlarında sık görülen '-Kişi İçin' /
     # '-Kurum için' / '-Şirket İçin' alt başlıkları varsa, blok sınırlarını
@@ -917,7 +947,7 @@ def extract(text):
     # gelmesi gereken veriler olduğu için ilgili uyarılar aşağıda korunuyor.)
     if out.get('arabulucuTc') and not is_valid_tc_kimlik(out['arabulucuTc']):
         notices.append(f"Arabulucu T.C. Kimlik No ({out['arabulucuTc']}) geçerli bir kontrol basamağına sahip değil; OCR/ayrıştırma hatası olabilir, lütfen kontrol edin.")
-    applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF'])
+    applicant=section(ptext,['BAŞVURU SAHİBİ BİLGİLERİ','BAŞVURUCU BİLGİLERİ','BAŞVURUCU'],['KARŞI TARAF BİLGİLERİ','KARŞI TARAF','DİĞER TARAF BİLGİLERİ','DİĞER TARAF'])
     if not applicant:
         notices.append("Belgede \"Başvuru Sahibi Bilgileri\" bölümü bulunamadı; başvurucu alanları boş kalmış olabilir, lütfen kontrol edin.")
     a=party_values(applicant,notices=notices)
@@ -1777,7 +1807,7 @@ let rc=__COUNT__;function addRespondent(){if(rc>=10)return;const root=document.g
 function setAllSections(open){document.querySelectorAll('details.info-section,details.respondent-card').forEach(function(d){d.open=open})}
 function lockAll(){document.querySelectorAll('input,textarea').forEach(function(x){if(x.name && x.type!=='file' && !x.name.startsWith('locked') && x.value.trim() && !x.parentElement.querySelector('input[name=locked][value=\"'+x.name+'\"]')){let l=document.createElement('input');l.type='checkbox';l.name='locked';l.value=x.name;l.checked=true;x.parentElement.appendChild(l)}})}
 function toggleMeeting(){const s=document.querySelector('select[name=gorusmeSekli]');const f=document.querySelector('textarea[name=gorusmeAdresi]');if(!s||!f)return;f.parentElement.style.display=s.value==='Yüz yüze'?'block':'none';}document.addEventListener('change',e=>{if(e.target.name==='gorusmeSekli')toggleMeeting()});document.addEventListener('DOMContentLoaded',toggleMeeting);</script></body></html>'''
-    return html.replace('__FILENAME__',escape(filename)).replace('__NOTICES__',notice_html).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
+    return html.replace('{nav}',nav).replace('__FILENAME__',escape(filename)).replace('__NOTICES__',notice_html).replace('__MSG__',msg).replace('__CARDS__',cards).replace('__RESP__',resp_html).replace('__OPTIONS__',options).replace('__COUNT__',str(len(respondents)))
 
 def inject_case_binding(html, case_id):
     """render_editor() çıktısını bir case_id'ye bağlar: /build, /merge gibi
