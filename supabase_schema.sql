@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS generated_documents (
     original_template  TEXT NOT NULL,
     stored_path        TEXT NOT NULL,
     doc_kind           TEXT,
+    amount             DOUBLE PRECISION,
     created_at         TEXT NOT NULL
 );
 
