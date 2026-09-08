@@ -341,6 +341,14 @@ class SupabaseAuditRepository(AuditRepository):
         r = c.table("audit_logs").select("*").order("created_at", desc=True).execute()
         return r.data or []
 
+    def list_for_target(self, target_id: str, action: str = None) -> list[dict]:
+        c = get_supabase()
+        q = c.table("audit_logs").select("*").eq("target_id", target_id)
+        if action:
+            q = q.eq("action", action)
+        r = q.order("created_at", desc=True).execute()
+        return r.data or []
+
 
 class SupabasePlanRepository(PlanRepository):
     def seed_defaults(self, plans: list[dict]) -> None:

@@ -169,10 +169,11 @@ class SQLiteGeneratedDocumentRepository(GeneratedDocumentRepository):
         did = document.get("id") or str(uuid4())
         with connect() as c:
             c.execute("""INSERT INTO generated_documents
-                (id,case_id,folder_id,owner_id,original_template,stored_path,doc_kind,created_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
+                (id,case_id,folder_id,owner_id,original_template,stored_path,doc_kind,amount,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
                 (did, document.get("case_id"), document.get("folder_id"), document["owner_id"],
-                 document["original_template"], document["stored_path"], document.get("doc_kind"), document["created_at"]))
+                 document["original_template"], document["stored_path"], document.get("doc_kind"),
+                 document.get("amount"), document["created_at"]))
         with connect() as c:
             row = c.execute("SELECT * FROM generated_documents WHERE id=?", (did,)).fetchone()
         return _row_to_dict(row)
@@ -373,6 +374,22 @@ class SQLiteAuditRepository(AuditRepository):
     def list_all(self) -> list[dict]:
         with connect() as c:
             rows = c.execute("SELECT * FROM audit_logs ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def list_for_target(self, target_id: str, action: str = None) -> list[dict]:
+        # NOT: Belirli bir dosyanın (case) değişiklik geçmişini göstermek için
+        # (bkz. files/routes.py case_history) list_all()'daki TÜM sistem
+        # kayıtlarını çekip Python'da filtrelemek yerine, doğrudan SQL'de
+        # hedef ve isteğe bağlı action'a göre filtrelenmiş sorgu kullanılır.
+        with connect() as c:
+            if action:
+                rows = c.execute(
+                    "SELECT * FROM audit_logs WHERE target_id=? AND action=? ORDER BY created_at DESC",
+                    (target_id, action)).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM audit_logs WHERE target_id=? ORDER BY created_at DESC",
+                    (target_id,)).fetchall()
         return [dict(r) for r in rows]
 
 

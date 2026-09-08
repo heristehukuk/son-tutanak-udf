@@ -89,7 +89,7 @@ def build_harcama_pusulasi(*, daire, dosya_turu_text, basvuru_no, taraf_sayisi, 
 
     buf = io.BytesIO()
     wb.save(buf)
-    return buf.getvalue(), uyari
+    return buf.getvalue(), uyari, unit_price
 
 # --- Admin: tarife tablosu yönetimi ---
 def list_tariffs():

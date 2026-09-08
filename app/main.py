@@ -131,7 +131,20 @@ async def home(request:Request):
         return page("İnceleme",
         '<div class="card narrow"><h1>Hesabınız incelemede</h1><p>Yönetici açıklama istemiş olabilir. Mesajlar bölümünü kontrol edin.</p>'
         '<p><a href="/messages/">Mesajlara Git</a></p></div>')
+    from app.stats_service import user_stats
+    stats=user_stats(u["id"])
+    def _fmt_amount(v):
+        return (f"{v:,.0f}".replace(",",".")+" ₺") if v else "0 ₺"
+    stats_html=f'''<div class="card"><h2>Özet</h2><div class="stats-grid">
+    <div class="stat"><span class="stat-num">{stats["cases_this_month"]}</span><span class="stat-label">Bu Ay Dosya</span></div>
+    <div class="stat"><span class="stat-num">{stats["cases_total"]}</span><span class="stat-label">Toplam Dosya</span></div>
+    <div class="stat"><span class="stat-num">{stats["docs_this_month"]}</span><span class="stat-label">Bu Ay Belge</span></div>
+    <div class="stat"><span class="stat-num">{stats["docs_total"]}</span><span class="stat-label">Toplam Belge</span></div>
+    <div class="stat"><span class="stat-num">{_fmt_amount(stats["amount_this_month"])}</span><span class="stat-label">Bu Ay Ücret</span></div>
+    <div class="stat"><span class="stat-num">{_fmt_amount(stats["amount_total"])}</span><span class="stat-label">Toplam Ücret</span></div>
+    </div></div>'''
     return page("Son Tutanak UDF Asistanı",
+    stats_html+
     f"""<div class="card"><h1>Son Tutanak UDF Asistanı v17</h1><p>Hoş geldiniz, {u["display_name"]}.</p>
     <form action="/edit" method="post" enctype="multipart/form-data">
     <label>Başvuru formu / kaynak belge</label>

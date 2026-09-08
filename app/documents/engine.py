@@ -1722,6 +1722,16 @@ def fill_general(text,values):
     return text
 
 def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),message='',custom_templates=None,notices=None):
+    # NOT: Bazı dosyalarda (ör. belgeden dosyaNo/başvuruNo çekilemediğinde
+    # "ayrı yeni dosya oluştur" akışında) case'in ilgili sütunu veritabanında
+    # gerçekten NULL (Python'da None) olarak kaydedilebiliyor. Aşağıdaki
+    # escape() çağrıları None ile çalışamayıp AttributeError fırlatıyordu -
+    # bu yüzden ekran hiç açılmıyordu. Burada tüm None değerler baştan boş
+    # metne çevrilerek, downstream'deki tüm .get(k,'') kullanımları güvenli
+    # hale getiriliyor (get(k,'') yalnızca anahtar HİÇ yoksa varsayılanı
+    # kullanır; anahtar varsa değeri None bile olsa aynen döner).
+    values={k:('' if v is None else v) for k,v in values.items()}
+    respondents=[{k:('' if v is None else v) for k,v in p.items()} for p in respondents]
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
             ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
@@ -1833,7 +1843,8 @@ def inject_case_binding(html, case_id):
     html = html.replace(
         '<button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button>',
         '<button type="button" class="secondary" onclick="lockAll()">🔒 Dolu Alanların Tümünü Sabitle</button>'
-        f'<button type="submit" formaction="/files/case/{escape(str(case_id),quote=True)}/save" class="secondary">💾 Değişiklikleri Kaydet (belge oluşturmadan)</button>',
+        f'<button type="submit" formaction="/files/case/{escape(str(case_id),quote=True)}/save" class="secondary">💾 Değişiklikleri Kaydet (belge oluşturmadan)</button>'
+        f'<a href="/files/case/{escape(str(case_id),quote=True)}/history" target="_blank" class="secondary" style="display:inline-block;text-decoration:none;text-align:center">📜 Değişiklik Geçmişi</a>',
         1)
     return html
 

@@ -41,7 +41,7 @@ def create_case(owner_id,file_no=None,application_no=None,title=None,file_type=N
     ensure_case_folders(owner_id, case["id"])
     return case["id"]
 
-def save_generated(owner_id,case_id,data,template_name,doc_kind=None,ext=".udf"):
+def save_generated(owner_id,case_id,data,template_name,doc_kind=None,ext=".udf",amount=None):
     gid=str(uuid4());key=f"generated/{gid}{ext}"
     storage.save(key,data)
     folder_id=None
@@ -54,7 +54,7 @@ def save_generated(owner_id,case_id,data,template_name,doc_kind=None,ext=".udf")
         folder_id=folder.get("id") if folder else None
     repos.generated_documents.create({
         "id":gid,"case_id":case_id,"folder_id":folder_id,"owner_id":owner_id,"original_template":template_name,
-        "stored_path":key,"doc_kind":doc_kind,"created_at":now().isoformat(),
+        "stored_path":key,"doc_kind":doc_kind,"amount":amount,"created_at":now().isoformat(),
     })
     # Davet mektubu üretildiğinde dosyanın standart "Davet gönder" görevi
     # otomatik tamamlanır. Diğer belge türlerinin görev akışına dokunulmaz.

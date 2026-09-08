@@ -1,5 +1,5 @@
 from html import escape
-import json
+import json, re
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from app.auth.service import require_active_user, now
@@ -78,7 +78,7 @@ async def files(request:Request,q:str="",status:str=""):
         <select name="status"><option value="">Tüm durumlar</option>{status_options}</select>
         <button type="submit">Ara</button>
         {'<a class="clear-link" href="/files/">Temizle</a>' if (q_clean or status) else ''}
-    </form>'''
+    </form><p><a href="/files/search-person">🔍 T.C. Kimlik No / Vergi No ile ara</a></p>'''
     result_info=""
     if q_clean or status:
         result_info=f'<p class="result-count">{len(cases)} sonuç bulundu</p>'
@@ -107,6 +107,116 @@ async def download_generated(request:Request,doc_id:str):
     return Response(data,media_type="application/octet-stream",
                     headers={"Content-Disposition":f'attachment; filename="{filename}"'})
 
+def _digits_only(s):
+    return re.sub(r'\D','',str(s or ''))
+
+@router.get("/search-person",response_class=HTMLResponse)
+async def search_person(request:Request,q:str=""):
+    """T.C. Kimlik No / Vergi No ile dosya arama. Normal kullanıcı yalnızca
+    KENDİ dosyalarında arar (repos.cases.list_by_owner); admin zaten tüm
+    dosyalara erişebildiği için (bkz. admin paneli) burada da TÜM dosyalarda
+    arayabilir (repos.cases.list_all_with_owner). Sorgu yalnızca rakamlara
+    indirgenip karşılaştırılır, böylece boşluklu/tireli girişler de eşleşir."""
+    u=require_active_user(request.cookies.get("session"))
+    if not u:return HTMLResponse("Giriş yapmalısınız.",401)
+    is_admin=bool(u.get("is_super_admin"))
+    q_clean=q.strip()
+    needle=_digits_only(q_clean)
+    results=[]
+    if needle and len(needle)>=5:  # çok kısa sorgularda anlamsız/geniş eşleşmeyi önle
+        cases=repos.cases.list_all_with_owner() if is_admin else repos.cases.list_by_owner(u["id"])
+        for c in cases:
+            if c.get("status")=="deleted":continue
+            v=case_values(c)
+            matches=[]
+            for key,label in (("basvurucuTcKimlik","Başvurucu T.C."),("basvurucuVergiNo","Başvurucu Vergi No"),("arabulucuTc","Arabulucu T.C.")):
+                if needle==_digits_only(v.get(key)):
+                    matches.append(label)
+            for r in (v.get("respondents") or []):
+                rname=r.get("name") or "Karşı Taraf"
+                if needle==_digits_only(r.get("tc")):
+                    matches.append(f"Karşı Taraf T.C. ({rname})")
+                if needle==_digits_only(r.get("tax")):
+                    matches.append(f"Karşı Taraf Vergi No ({rname})")
+            if matches:
+                results.append((c,matches))
+    style='''<style>.search-bar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
+    .search-bar input[type=text]{flex:1;min-width:220px;padding:8px 12px;border:1px solid #d7dde3;border-radius:8px;font-size:14px}
+    .search-bar button{padding:8px 16px;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font-size:14px}
+    .result-count{font-size:13px;color:#66717c;margin:0 0 10px}
+    .match-tag{display:inline-block;background:#eef2ff;color:#3730a3;font-size:12px;padding:3px 8px;border-radius:999px;margin:2px 4px 2px 0}
+    .owner-tag{font-size:12px;color:#66717c}</style>'''
+    q_val=escape(q_clean,quote=True)
+    search_form=f'''<form method="get" action="/files/search-person" class="search-bar">
+        <input type="text" name="q" value="{q_val}" placeholder="T.C. Kimlik No veya Vergi No girin (en az 5 hane)">
+        <button type="submit">Ara</button>
+    </form>'''
+    rows=[]
+    for c,matches in results:
+        tags="".join(f'<span class="match-tag">{escape(m)}</span>' for m in matches)
+        owner_line=""
+        if is_admin:
+            owner_line=f'<p class="owner-tag">Dosya sahibi: {escape(c.get("owner_name") or c.get("owner_email") or "-")}</p>'
+        rows.append(f'''<div class="card">
+            <h3>{escape(c.get("title") or "Dosya")}</h3>
+            <p>Dosya No: {escape(c.get("file_no") or "-")} · Başvuru No: {escape(c.get("application_no") or "-")}</p>
+            {owner_line}
+            <p>{tags}</p>
+            <p class="links"><a href="/files/case/{c["id"]}">🗂️ Bilgi Havuzunu Görüntüle</a></p>
+        </div>''')
+    result_info=""
+    if q_clean:
+        if len(needle)<5:
+            result_info='<p class="result-count">Arama için en az 5 haneli bir numara girin.</p>'
+        else:
+            result_info=f'<p class="result-count">{len(results)} sonuç bulundu.</p>'
+    body="".join(rows) if rows else (f"<p>Aramanızla eşleşen dosya bulunamadı.</p>" if (q_clean and len(needle)>=5) else "")
+    scope_note='(tüm kullanıcıların dosyalarında)' if is_admin else '(yalnızca kendi dosyalarınızda)'
+    return page("T.C./Vergi No ile Ara", style+f"<h1>🔍 T.C. Kimlik No / Vergi No ile Dosya Ara <small>{scope_note}</small></h1>"+search_form+result_info+body)
+
+@router.get("/case/{case_id}/history",response_class=HTMLResponse)
+async def case_history(request:Request,case_id:str):
+    """Bilgi havuzu ekranındaki '📜 Değişiklik Geçmişi' linki: bu dosyanın
+    alan bazlı değişiklik izini (audit_logs, action='case_data_field_changed')
+    gösterir. Bir birleştirme yanlış veri getirdiğinde eski değere bakılabilsin
+    diye eklenmişti (bkz. persist_case_update); burada ilk kez görüntüleniyor."""
+    u=require_active_user(request.cookies.get("session"))
+    if not u:return HTMLResponse("Giriş yapmalısınız.",401)
+    case=repos.cases.get(case_id)
+    is_admin=bool(u.get("is_super_admin"))
+    if not case or (case.get("owner_id")!=u["id"] and not is_admin) or case.get("status")=="deleted":
+        return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",404)
+    from app.documents.engine import LABELS
+    logs=repos.audit.list_for_target(case_id, action="case_data_field_changed")
+    actor_cache={}
+    def actor_label(aid):
+        if not aid:return "Sistem"
+        if aid not in actor_cache:
+            au=repos.users.get(aid)
+            actor_cache[aid]=(au.get("display_name") or au.get("email")) if au else aid
+        return actor_cache[aid] or aid
+    rows=[]
+    for l in logs:
+        try:
+            d=json.loads(l.get("details") or "{}")
+        except Exception:
+            d={}
+        field=d.get("field",""); old_v=d.get("old",""); new_v=d.get("new","")
+        label=LABELS.get(field,field)
+        ts=str(l.get("created_at") or "")[:19].replace("T"," ")
+        rows.append(f'''<div class="hist-row">
+            <div class="hist-meta">{escape(ts)} · {escape(actor_label(l.get("actor_id")))}</div>
+            <div class="hist-field">{escape(label)}</div>
+            <div class="hist-diff"><span class="old">{escape(old_v) or "(boş)"}</span> → <span class="new">{escape(new_v) or "(boş)"}</span></div>
+        </div>''')
+    style='''<style>.hist-row{background:#fff;border-radius:10px;padding:12px 14px;margin:10px 0;box-shadow:0 2px 8px #0001}
+    .hist-meta{font-size:12px;color:#66717c;margin-bottom:4px}.hist-field{font-weight:700;margin-bottom:4px}
+    .hist-diff{font-size:14px}.old{color:#b91c1c;text-decoration:line-through;margin-right:6px}.new{color:#166534;font-weight:600}</style>'''
+    body="".join(rows) or "<p>Bu dosya için henüz kaydedilmiş bir değişiklik yok.</p>"
+    back=f'<p><a href="/files/case/{escape(case_id,quote=True)}">← Bilgi Havuzuna Dön</a></p>'
+    title_bit=escape(case.get("title") or "Dosya")
+    return page(f"Değişiklik Geçmişi - {title_bit}", style+f"<h1>📜 Değişiklik Geçmişi — {title_bit}</h1>"+back+body)
+
 @router.get("/case/{case_id}",response_class=HTMLResponse)
 async def view_case_pool(request:Request,case_id:str):
     """Bir dosyanın bilgi havuzunu (case_data_json + karşı taraflar) doğrudan
@@ -116,7 +226,8 @@ async def view_case_pool(request:Request,case_id:str):
     u=require_active_user(request.cookies.get("session"))
     if not u:return HTMLResponse("Giriş yapmalısınız.",401)
     case=repos.cases.get(case_id)
-    if not case or case.get("owner_id")!=u["id"] or case.get("status")=="deleted":
+    is_admin=bool(u.get("is_super_admin"))
+    if not case or (case.get("owner_id")!=u["id"] and not is_admin) or case.get("status")=="deleted":
         return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",404)
     values=case_values(case)
     respondents=values.get("respondents") or []

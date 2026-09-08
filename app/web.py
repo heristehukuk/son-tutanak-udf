@@ -9,6 +9,10 @@ nav{background:#17212b;color:white;padding:14px 5%;display:flex;gap:18px;align-i
 button{background:#1769e0;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-weight:700;cursor:pointer}.err{color:#a11}.ok{color:#176b35}
 .badge{background:#dc2626;color:#fff;border-radius:999px;padding:1px 8px;font-size:12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:10px}
+.stat{background:#f3f6f9;border-radius:10px;padding:14px 10px;text-align:center}
+.stat-num{display:block;font-size:22px;font-weight:700;color:#1769e0}
+.stat-label{display:block;font-size:12px;color:#66717c;margin-top:4px}
 """
 
 def page(title, body, status=200):

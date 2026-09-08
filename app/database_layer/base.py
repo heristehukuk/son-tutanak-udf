@@ -320,3 +320,6 @@ class AuditRepository(ABC):
 
     @abstractmethod
     def list_all(self) -> list[dict]: ...
+
+    @abstractmethod
+    def list_for_target(self, target_id: str, action: str = None) -> list[dict]: ...

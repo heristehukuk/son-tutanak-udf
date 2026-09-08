@@ -17,7 +17,7 @@ async def build_pusula(request: Request):
     values, respondents, _, _ = form_state(form)
     taraf_sayisi = 1 + len(respondents)  # başvurucu dahil toplam
     try:
-        xlsx_bytes, uyari = build_harcama_pusulasi(
+        xlsx_bytes, uyari, unit_price = build_harcama_pusulasi(
             daire=values.get("daireBilgisi", ""),
             dosya_turu_text=values.get("dosyaTuru") or values.get("uyusmazlik") or "",
             basvuru_no=values.get("basvuruNo", ""),
@@ -30,7 +30,8 @@ async def build_pusula(request: Request):
         return HTMLResponse(f"Harcama Pusulası oluşturulurken hata: {e}", 500)
     cid = str(form.get("case_id") or "")
     if cid:
-        save_generated(u["id"], cid, xlsx_bytes, "Harcama Pusulası", doc_kind="ucret_pusulasi", ext=".xlsx")
+        save_generated(u["id"], cid, xlsx_bytes, "Harcama Pusulası", doc_kind="ucret_pusulasi", ext=".xlsx",
+                        amount=unit_price if unit_price else None)
     import io
     headers = {"Content-Disposition": 'attachment; filename="harcama_pusulasi.xlsx"'}
     if uyari:
