@@ -1,4 +1,4 @@
-# Son Tutanak UDF Asistanı v16
+# Son Tutanak UDF Asistanı v17
 
 v15'in çalışan OCR/UDF motoru korunarak modüler üyelik, plan/limit, dosya,
 admin, mesaj ve anket katmanları eklenmiştir.

@@ -209,3 +209,17 @@ def init_db():
         for col in ("mediator_name","mediator_tc","mediator_registry","mediator_address","mediator_phone","mediator_email"):
             if col not in user_cols3:
                 c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+        # 2026-09: Anket modülü - service.py'nin ihtiyaç duyduğu ama ilk
+        # CREATE TABLE'da bulunmayan sütunlar + (question_id,user_id) tekilliği.
+        survey_cols = [r["name"] for r in c.execute("PRAGMA table_info(surveys)").fetchall()]
+        if "created_by" not in survey_cols:
+            c.execute("ALTER TABLE surveys ADD COLUMN created_by TEXT REFERENCES users(id) ON DELETE SET NULL")
+        sq_cols = [r["name"] for r in c.execute("PRAGMA table_info(survey_questions)").fetchall()]
+        if "options_json" not in sq_cols:
+            c.execute("ALTER TABLE survey_questions ADD COLUMN options_json TEXT")
+        if "sort_order" not in sq_cols:
+            c.execute("ALTER TABLE survey_questions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        sa_cols = [r["name"] for r in c.execute("PRAGMA table_info(survey_answers)").fetchall()]
+        if "updated_at" not in sa_cols:
+            c.execute("ALTER TABLE survey_answers ADD COLUMN updated_at TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_answers_unique ON survey_answers(question_id, user_id)")

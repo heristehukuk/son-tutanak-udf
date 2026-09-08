@@ -3,17 +3,11 @@
 -- son-tutanak-udf projesi icin Supabase (PostgreSQL) semasi.
 --
 -- Bu dosya app/database_layer/supabase_repository.py ile BIREBIR uyumlu
--- olacak sekilde hazirlanmistir. Sadece Supabase repository katmaninin
--- gercekten kullandigi 11 tablo icerir:
+-- olacak sekilde hazirlanmistir. Supabase repository katmaninin
+-- kullandigi tablolari icerir:
 --   users, sessions, plans, cases, documents, generated_documents,
---   usage, messages, custom_templates, fee_tariffs, audit_logs
---
--- NOT: SQLite semasinda (app/database.py) ayrica surveys,
--- survey_questions, survey_answers tablolari da var, ancak
--- app/surveys/routes.py bu tablolara hic dokunmuyor (anket modulu
--- henuz DB'ye baglanmamis). O yuzden bu dosyaya dahil edilmediler.
--- Ileride anket modulunu Supabase'e baglarsan bu dosyanin sonuna
--- ekleyebilirsin.
+--   usage, messages, custom_templates, fee_tariffs, audit_logs,
+--   surveys, survey_questions, survey_answers
 --
 -- Kullanim: Supabase Dashboard -> SQL Editor -> New query -> bu dosyanin
 -- tamamini yapistir -> Run. Tek seferde calistirilir, tekrar
@@ -297,16 +291,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- =====================================================================
 -- Anket modulu tablolari (surveys, survey_questions, survey_answers)
 --
--- NOT: Bu tablolar olusturuldu, ama app/surveys/routes.py henuz bunlara
--- hic dokunmuyor (su an sadece sabit bir bilgi sayfasi gosteriyor).
--- Aneti gercekten aktif etmek icin ayrica su kod parcalarinin
--- yazilmasi gerekiyor:
---   1) app/database_layer/base.py    -> SurveyRepository arayuzu
---   2) app/database_layer/sqlite_repository.py -> SQLite implementasyonu
---   3) app/database_layer/supabase_repository.py -> Supabase implementasyonu
---   4) app/database_layer/__init__.py -> factory'ye ekleme
---   5) app/surveys/routes.py -> gercek liste/cevap-kaydetme/sonuc mantigi
--- Bu adimlari Render kurulumundan sonra birlikte yapacagiz.
+-- 2026-09 GUNCELLEMESI: Modul artik app/surveys/routes.py + service.py
+-- uzerinden tam calisiyor (repository katmani base.py/sqlite_repository.py/
+-- supabase_repository.py/__init__.py icine eklendi). Asagidaki sema hem
+-- ilk kurulumda hem de var olan bir Supabase projesinde TEKRAR calistirmak
+-- icin guvenli (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS kullanildi).
 -- =====================================================================
 
 CREATE TABLE IF NOT EXISTS surveys (
@@ -314,15 +303,21 @@ CREATE TABLE IF NOT EXISTS surveys (
     title        TEXT NOT NULL,
     description  TEXT,
     active       INTEGER NOT NULL DEFAULT 1,
-    created_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL,
+    created_by   TEXT REFERENCES users(id) ON DELETE SET NULL
 );
+ALTER TABLE surveys ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES users(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS survey_questions (
-    id         TEXT PRIMARY KEY,
-    survey_id  TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
-    question   TEXT NOT NULL,
-    kind       TEXT NOT NULL DEFAULT 'text'
+    id           TEXT PRIMARY KEY,
+    survey_id    TEXT NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    question     TEXT NOT NULL,
+    kind         TEXT NOT NULL DEFAULT 'text',
+    options_json TEXT,
+    sort_order   INTEGER NOT NULL DEFAULT 0
 );
+ALTER TABLE survey_questions ADD COLUMN IF NOT EXISTS options_json TEXT;
+ALTER TABLE survey_questions ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS survey_answers (
     id           TEXT PRIMARY KEY,
@@ -330,12 +325,16 @@ CREATE TABLE IF NOT EXISTS survey_answers (
     question_id  TEXT NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     answer       TEXT NOT NULL,
-    created_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT
 );
+ALTER TABLE survey_answers ADD COLUMN IF NOT EXISTS updated_at TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_survey_questions_survey_id ON survey_questions(survey_id);
 CREATE INDEX IF NOT EXISTS idx_survey_answers_survey_id ON survey_answers(survey_id);
 CREATE INDEX IF NOT EXISTS idx_survey_answers_user_id ON survey_answers(user_id);
+-- Bir kullanici bir soruyu yalnizca bir kez cevaplar (upsert bu indekse dayanir).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_answers_unique ON survey_answers(question_id, user_id);
 
 -- Faydali indeksler (opsiyonel ama onerilir)
 CREATE INDEX IF NOT EXISTS idx_cases_owner_id ON cases(owner_id);

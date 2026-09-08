@@ -985,14 +985,45 @@ def extract(text):
     return out,respondents,notices
 
 def make_mapper(a,b):
-    sm=difflib.SequenceMatcher(a=a,b=b,autojunk=False); blocks=sm.get_matching_blocks()
+    """'a' metnindeki bir konumu 'b' metnindeki karşılığına eşler.
+
+    ESKİ davranış (kaldırıldı): eşleşen bloklar dışında kalan noktalar için
+    "p'den önceki en yakın eşleşen blok" bulunup oradan sabit bir mesafe
+    ekleniyordu (`prev.b + min(p-prev.a, prev.size)`). Bu, p bir 'replace'
+    aralığının İÇİNDE kaldığında (ör. bir etiketin değeri farklı uzunlukta bir
+    değerle değiştirildiğinde) yanlış sonuç veriyordu: eski blok tekrarlayan
+    hukuki ifadeler ("hâlinde", "taraflarca" vb.) yüzünden yanlış "çapa"
+    seçebiliyor ve tüm sonraki ofsetler kümülatif olarak kayıyordu - bu da
+    UYAP'ın reddettiği bozuk UDF dosyalarına yol açan asıl nedendi.
+
+    YENİ davranış: SequenceMatcher.get_opcodes() ile 'a'yı baştan sona,
+    ÇAKIŞMAYAN ve SIRALI aralıklara (equal/replace/delete/insert) bölüyoruz.
+    p hangi opcode aralığına düşüyorsa:
+      - 'equal' ise birebir (sabit fark ile) eşlenir,
+      - 'replace'/'delete' ise o aralık içindeki GÖRECELİ konumu 'b'
+        tarafındaki karşılık gelen aralığa ORANTILI olarak eşlenir
+        (aralığın rastgele bir ucuna yapışmak yerine).
+    Bu, tekrarlayan ifadelerden kaynaklanan yanlış çapalamayı ortadan
+    kaldırmaz (fuzzy diff'in doğası gereği bu ancak tracked-edit ile tam
+    çözülür) ama en azından her opcode aralığı içinde tutarlı ve matematiksel
+    olarak doğru bir eşleme sağlar; önceki sezgiselin en somut kaynaklı hatası
+    (bir replace aralığının ortasına düşen p'nin sabit bir uca yapıştırılması)
+    giderilmiş olur.
+    """
+    sm=difflib.SequenceMatcher(a=a,b=b,autojunk=False)
+    opcodes=sm.get_opcodes()
     def mp(p):
         if p<=0:return 0
         if p>=len(a):return len(b)
-        for x in blocks:
-            if x.a<=p<=x.a+x.size:return x.b+p-x.a
-        prev=max((x for x in blocks if x.a<p),default=None,key=lambda x:x.a)
-        return prev.b+min(p-prev.a,prev.size) if prev else 0
+        for tag,i1,i2,j1,j2 in opcodes:
+            if i1<=p<i2 or (i1==i2==p):
+                if tag=='equal':
+                    return j1+(p-i1)
+                if i2<=i1:
+                    return j1
+                ratio=(p-i1)/(i2-i1)
+                return j1+round(ratio*(j2-j1))
+        return len(b)
     return mp
 
 def update_offsets(xml,a,b):

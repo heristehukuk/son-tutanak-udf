@@ -298,5 +298,59 @@ class SubheaderTypeTests(unittest.TestCase):
         self.assertEqual(pv["type"], "kurum")
 
 
+class MakeMapperOffsetTests(unittest.TestCase):
+    """make_mapper (update_offsets'ın altındaki fuzzy diff eşleyicisi), 2026-09
+    tarihli incelemede fuzzy 'en yakın önceki blok' sezgiseli yerine
+    get_opcodes tabanlı orantılı eşlemeye çevrildi. Bu testler, sabit
+    template metninde tek bir etiket değeri farklı uzunlukta bir değerle
+    değiştirildiğinde ilgili aralığın DOĞRU şekilde yeni metindeki karşılığına
+    eşlendiğini doğrular (eski sezgisel, tekrarlayan ifadeler yüzünden bu
+    durumda offset'leri kümülatif olarak kaydırabiliyordu)."""
+
+    def test_esit_metinde_birebir_eslenir(self):
+        from app.documents.engine import make_mapper
+
+        a = b = "DOSYA NO: 2026/1\nARABULUCU: Ayşe Yılmaz\n"
+        mp = make_mapper(a, b)
+        for p in (0, 5, len(a) // 2, len(a)):
+            self.assertEqual(mp(p), p)
+
+    def test_daha_uzun_deger_ile_degisimde_sonraki_alan_dogru_kayar(self):
+        from app.documents.engine import make_mapper
+
+        a = "DOSYA NO: 2026/1\nARABULUCU: Ayşe Yılmaz\nADRES: Kızılay Mah.\n"
+        b = "DOSYA NO: 2026/1\nARABULUCU: Ahmet Mehmet Yılmazoğlu\nADRES: Kızılay Mah.\n"
+        mp = make_mapper(a, b)
+        # ADRES etiketinin eski metindeki konumu, yeni metindeki (kaymış) konumuna doğru eşlenmeli.
+        adres_start_a = a.index("ADRES")
+        adres_start_b = b.index("ADRES")
+        self.assertEqual(mp(adres_start_a), adres_start_b)
+
+    def test_daha_kisa_deger_ile_degisimde_sonraki_alan_dogru_kayar(self):
+        from app.documents.engine import make_mapper
+
+        a = "ARABULUCU: Mehmet Ahmet Yılmazoğlu\nADRES: Kızılay Mah.\n"
+        b = "ARABULUCU: Ali\nADRES: Kızılay Mah.\n"
+        mp = make_mapper(a, b)
+        adres_start_a = a.index("ADRES")
+        adres_start_b = b.index("ADRES")
+        self.assertEqual(mp(adres_start_a), adres_start_b)
+
+    def test_replace_araligi_icindeki_nokta_orantili_eslenir(self):
+        from app.documents.engine import make_mapper
+
+        # "eski_deger" -> "y" : replace aralığının ortasına düşen bir nokta,
+        # eski sezgiselde aralığın başına/sonuna yapışabiliyordu; burada
+        # sadece b sınırları içinde kalması ve monotonluğun bozulmaması
+        # bekleniyor (tam karakter-karakter karşılığı fuzzy diff'te zaten
+        # tanımsızdır - amaç, kümülatif kaymayı önlemektir).
+        a = "X: eski_deger_cok_uzun SONRAKI_ALAN: sabit\n"
+        b = "X: y SONRAKI_ALAN: sabit\n"
+        mp = make_mapper(a, b)
+        sonraki_a = a.index("SONRAKI_ALAN")
+        sonraki_b = b.index("SONRAKI_ALAN")
+        self.assertEqual(mp(sonraki_a), sonraki_b)
+
+
 if __name__ == "__main__":
     unittest.main()

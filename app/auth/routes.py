@@ -10,6 +10,11 @@ from app.web import page
 
 router = APIRouter()
 
+# Üretimde (Render, HTTPS arkasında) cookie mutlaka secure olmalı; yerel HTTP
+# geliştirmede secure=True cookie'nin hiç set edilmemesine yol açar. Bu yüzden
+# varsayılan True, sadece COOKIE_SECURE=0 ile (yerelde) kapatılabilir.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1").strip().lower() not in ("0", "false", "no")
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return page("Giriş", """<div class="card narrow"><h1>Giriş</h1>
@@ -26,7 +31,7 @@ async def login(request: Request, email: str=Form(...), password: str=Form(...))
         return page("Hesap", '<div class="card narrow"><p class="err">Bu hesap kullanıma kapatılmıştır.</p></div>', 403)
     token = create_session(u["id"], request.client.host if request.client else "")
     response = RedirectResponse("/", status_code=303)
-    response.set_cookie("session", token, httponly=True, secure=False, samesite="lax", max_age=7*86400)
+    response.set_cookie("session", token, httponly=True, secure=COOKIE_SECURE, samesite="lax", max_age=7*86400)
     return response
 
 @router.get("/register", response_class=HTMLResponse)

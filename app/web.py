@@ -13,6 +13,9 @@ button{background:#1769e0;color:#fff;border:0;border-radius:8px;padding:11px 16p
 .stat{background:#f3f6f9;border-radius:10px;padding:14px 10px;text-align:center}
 .stat-num{display:block;font-size:22px;font-weight:700;color:#1769e0}
 .stat-label{display:block;font-size:12px;color:#66717c;margin-top:4px}
+.opts{display:flex;flex-direction:column;gap:4px;margin:6px 0 14px}.opt{display:flex;align-items:center;gap:6px;font-weight:400}.opt input{width:auto;margin:0}
+.tbl{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 3px 18px #0001}.tbl th,.tbl td{padding:10px 12px;text-align:left;border-bottom:1px solid #eef1f4}.tbl th{background:#f3f6f9}
+.danger{background:#a11}
 """
 
 def page(title, body, status=200):

@@ -38,8 +38,21 @@ from app.supabase_client import supabase_health
 from app.modules.calendar.router import router as calendar_router
 from app.modules.tasks.router import router as tasks_router
 from app.folders.routes import router as folders_router
+from app.security_middleware import CSRFOriginCheckMiddleware, RateLimitMiddleware
 app=FastAPI(title="Son Tutanak UDF Asistanı v17")
 logger = logging.getLogger(__name__)
+# 2026-09: CSRF (Origin/Referer doğrulama) + basit rate limit. Sırayla en son
+# eklenen middleware en dışta çalışır; rate limit CSRF'den önce çalışsın diye
+# CSRF'i daha sonra ekliyoruz (Starlette add_middleware LIFO sarmalar).
+app.add_middleware(
+    RateLimitMiddleware,
+    limits={
+        "/auth/login": (10, 60),      # 1 dakikada en fazla 10 giriş denemesi / IP
+        "/auth/register": (5, 300),   # 5 dakikada en fazla 5 kayıt denemesi / IP
+    },
+    default_limit=(300, 60),          # diğer tüm yollar: 1 dakikada en fazla 300 istek / IP
+)
+app.add_middleware(CSRFOriginCheckMiddleware)
 app.include_router(auth_router,prefix="/auth")
 app.include_router(files_router,prefix="/files")
 app.include_router(admin_router,prefix="/admin")

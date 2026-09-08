@@ -18,6 +18,7 @@ from app.database_layer.base import (
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
     TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository, PendingMergeRepository,
+    SurveyRepository, SurveyQuestionRepository, SurveyAnswerRepository,
 )
 
 
@@ -380,6 +381,104 @@ class SupabaseUsageRepository(UsageRepository):
         c = get_supabase()
         r = c.table("usage").insert(usage).execute()
         return _first(r.data) or usage
+
+
+class SupabaseSurveyRepository(SurveyRepository):
+    def create(self, survey: dict) -> dict:
+        from uuid import uuid4
+        survey = dict(survey); survey.setdefault("id", str(uuid4()))
+        c = get_supabase()
+        c.table("surveys").insert(survey).execute()
+        r = c.table("surveys").select("*").eq("id", survey["id"]).execute()
+        return _first(r.data)
+
+    def get(self, survey_id: str) -> Optional[dict]:
+        c = get_supabase()
+        r = c.table("surveys").select("*").eq("id", survey_id).execute()
+        return _first(r.data)
+
+    def update(self, survey_id: str, values: dict) -> Optional[dict]:
+        c = get_supabase()
+        if values:
+            c.table("surveys").update(values).eq("id", survey_id).execute()
+        return self.get(survey_id)
+
+    def delete(self, survey_id: str) -> None:
+        c = get_supabase()
+        c.table("surveys").delete().eq("id", survey_id).execute()
+
+    def list_all(self) -> list[dict]:
+        c = get_supabase()
+        r = c.table("surveys").select("*").order("created_at", desc=True).execute()
+        return r.data or []
+
+
+class SupabaseSurveyQuestionRepository(SurveyQuestionRepository):
+    def create(self, question: dict) -> dict:
+        from uuid import uuid4
+        question = dict(question); question.setdefault("id", str(uuid4()))
+        c = get_supabase()
+        c.table("survey_questions").insert(question).execute()
+        r = c.table("survey_questions").select("*").eq("id", question["id"]).execute()
+        return _first(r.data)
+
+    def get(self, question_id: str) -> Optional[dict]:
+        c = get_supabase()
+        r = c.table("survey_questions").select("*").eq("id", question_id).execute()
+        return _first(r.data)
+
+    def update(self, question_id: str, values: dict) -> Optional[dict]:
+        c = get_supabase()
+        if values:
+            c.table("survey_questions").update(values).eq("id", question_id).execute()
+        return self.get(question_id)
+
+    def delete(self, question_id: str) -> None:
+        c = get_supabase()
+        c.table("survey_questions").delete().eq("id", question_id).execute()
+
+    def list_for_survey(self, survey_id: str) -> list[dict]:
+        c = get_supabase()
+        r = (c.table("survey_questions").select("*").eq("survey_id", survey_id)
+             .order("sort_order").order("question").execute())
+        return r.data or []
+
+
+class SupabaseSurveyAnswerRepository(SurveyAnswerRepository):
+    def upsert(self, answer: dict) -> dict:
+        from uuid import uuid4
+        answer = dict(answer); answer.setdefault("id", str(uuid4()))
+        c = get_supabase()
+        existing = (c.table("survey_answers").select("id")
+                    .eq("question_id", answer["question_id"]).eq("user_id", answer["user_id"]).execute())
+        row = _first(existing.data)
+        if row:
+            c.table("survey_answers").update({
+                "answer": answer["answer"],
+                "updated_at": answer.get("updated_at") or answer.get("created_at"),
+            }).eq("id", row["id"]).execute()
+            r = c.table("survey_answers").select("*").eq("id", row["id"]).execute()
+        else:
+            c.table("survey_answers").insert(answer).execute()
+            r = c.table("survey_answers").select("*").eq("id", answer["id"]).execute()
+        return _first(r.data)
+
+    def has_answered(self, survey_id: str, user_id: str) -> bool:
+        c = get_supabase()
+        r = (c.table("survey_answers").select("id").eq("survey_id", survey_id)
+             .eq("user_id", user_id).limit(1).execute())
+        return bool(r.data)
+
+    def list_for_user_survey(self, survey_id: str, user_id: str) -> list[dict]:
+        c = get_supabase()
+        r = (c.table("survey_answers").select("*").eq("survey_id", survey_id)
+             .eq("user_id", user_id).execute())
+        return r.data or []
+
+    def list_for_survey(self, survey_id: str) -> list[dict]:
+        c = get_supabase()
+        r = c.table("survey_answers").select("*").eq("survey_id", survey_id).order("created_at").execute()
+        return r.data or []
 
 
 class SupabaseCalendarEventRepository(CalendarEventRepository):

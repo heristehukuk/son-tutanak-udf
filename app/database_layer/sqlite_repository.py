@@ -18,6 +18,7 @@ from app.database_layer.base import (
     TariffRepository, AuditRepository, PlanRepository, UsageRepository,
     CalendarEventRepository, TaskRepository, TaskTemplateRepository,
     TaskHistoryRepository, PermissionRepository, CounterRepository, FolderRepository, PendingMergeRepository,
+    SurveyRepository, SurveyQuestionRepository, SurveyAnswerRepository,
 )
 
 
@@ -390,6 +391,81 @@ class SQLiteAuditRepository(AuditRepository):
                 rows = c.execute(
                     "SELECT * FROM audit_logs WHERE target_id=? ORDER BY created_at DESC",
                     (target_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLiteSurveyRepository(SurveyRepository):
+    def create(self, survey: dict) -> dict:
+        survey = dict(survey); sid = survey.get("id") or str(uuid4()); survey["id"] = sid
+        cols = ",".join(survey.keys()); qs = ",".join("?" for _ in survey)
+        with connect() as c: c.execute(f"INSERT INTO surveys ({cols}) VALUES ({qs})", tuple(survey.values()))
+        return self.get(sid)
+    def get(self, survey_id: str):
+        with connect() as c: row = c.execute("SELECT * FROM surveys WHERE id=?", (survey_id,)).fetchone()
+        return _row_to_dict(row)
+    def update(self, survey_id: str, values: dict):
+        if not values: return self.get(survey_id)
+        cols = ",".join(f"{k}=?" for k in values)
+        with connect() as c: c.execute(f"UPDATE surveys SET {cols} WHERE id=?", (*values.values(), survey_id))
+        return self.get(survey_id)
+    def delete(self, survey_id: str) -> None:
+        with connect() as c: c.execute("DELETE FROM surveys WHERE id=?", (survey_id,))
+    def list_all(self) -> list[dict]:
+        with connect() as c: rows = c.execute("SELECT * FROM surveys ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLiteSurveyQuestionRepository(SurveyQuestionRepository):
+    def create(self, question: dict) -> dict:
+        question = dict(question); qid = question.get("id") or str(uuid4()); question["id"] = qid
+        cols = ",".join(question.keys()); qs = ",".join("?" for _ in question)
+        with connect() as c: c.execute(f"INSERT INTO survey_questions ({cols}) VALUES ({qs})", tuple(question.values()))
+        return self.get(qid)
+    def get(self, question_id: str):
+        with connect() as c: row = c.execute("SELECT * FROM survey_questions WHERE id=?", (question_id,)).fetchone()
+        return _row_to_dict(row)
+    def update(self, question_id: str, values: dict):
+        if not values: return self.get(question_id)
+        cols = ",".join(f"{k}=?" for k in values)
+        with connect() as c: c.execute(f"UPDATE survey_questions SET {cols} WHERE id=?", (*values.values(), question_id))
+        return self.get(question_id)
+    def delete(self, question_id: str) -> None:
+        with connect() as c: c.execute("DELETE FROM survey_questions WHERE id=?", (question_id,))
+    def list_for_survey(self, survey_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM survey_questions WHERE survey_id=? ORDER BY sort_order,question", (survey_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+class SQLiteSurveyAnswerRepository(SurveyAnswerRepository):
+    def upsert(self, answer: dict) -> dict:
+        answer = dict(answer); aid = answer.get("id") or str(uuid4()); answer["id"] = aid
+        with connect() as c:
+            existing = c.execute(
+                "SELECT id FROM survey_answers WHERE question_id=? AND user_id=?",
+                (answer["question_id"], answer["user_id"])).fetchone()
+            if existing:
+                c.execute("UPDATE survey_answers SET answer=?, updated_at=? WHERE id=?",
+                          (answer["answer"], answer.get("updated_at") or answer.get("created_at"), existing["id"]))
+                row = c.execute("SELECT * FROM survey_answers WHERE id=?", (existing["id"],)).fetchone()
+            else:
+                cols = ",".join(answer.keys()); qs = ",".join("?" for _ in answer)
+                c.execute(f"INSERT INTO survey_answers ({cols}) VALUES ({qs})", tuple(answer.values()))
+                row = c.execute("SELECT * FROM survey_answers WHERE id=?", (aid,)).fetchone()
+        return _row_to_dict(row)
+    def has_answered(self, survey_id: str, user_id: str) -> bool:
+        with connect() as c:
+            row = c.execute("SELECT 1 FROM survey_answers WHERE survey_id=? AND user_id=? LIMIT 1",
+                             (survey_id, user_id)).fetchone()
+        return row is not None
+    def list_for_user_survey(self, survey_id: str, user_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM survey_answers WHERE survey_id=? AND user_id=?",
+                              (survey_id, user_id)).fetchall()
+        return [dict(r) for r in rows]
+    def list_for_survey(self, survey_id: str) -> list[dict]:
+        with connect() as c:
+            rows = c.execute("SELECT * FROM survey_answers WHERE survey_id=? ORDER BY created_at", (survey_id,)).fetchall()
         return [dict(r) for r in rows]
 
 
