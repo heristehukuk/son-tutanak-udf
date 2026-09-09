@@ -499,7 +499,13 @@ PATTERNS={
 'bitisTarihi':[r'Arabuluculuk\s+Sürecinin\s+Bittiği\s+Tarih\s*[:：][ \t]*([^\n<]{2,80})'],
 'duzenlemeYeri':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Yer\s*[:：][ \t]*([^\n<]{2,120})'],
 'duzenlemeTarihi':[r'Son\s+Tutanağın\s+Düzenlendiği\s+Tarih\s*[:：][ \t]*([^\n<]{2,80})'],
-'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：][ \t]*([^\n<]{2,300})']}
+'sonuc':[r'Arabuluculuk\s+Sonucu\s*[:：][ \t]*([^\n<]{2,300})'],
+# NOT: Başvuru formlarında büro adı genelde "ANKARA ARABULUCULUK BÜROSU" gibi,
+# il adı + sabit "ARABULUCULUK BÜROSU" ifadesi olarak geçiyor. İl adı tek
+# kelimeli de olabilir (ANKARA), birden çok kelimeli de (K. MARAŞ gibi) - bu
+# yüzden ifadenin hemen öncesindeki 1-40 karakterlik büyük harfli bölümü de
+# yakalıyoruz.
+'arabuluculukBurosu':[r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ.\t ]{1,40}ARABULUCULUK[ \t]+BÜROSU)']}
 
 
 def normalize_date_value(value):
@@ -979,6 +985,14 @@ def extract(text):
         out['uyusmazlik']=out['dosyaTuru']
     if out.get('baslangicTarihi'):
         out['baslangicTarihi']=normalize_date_value(out['baslangicTarihi'])
+    # NOT: Büro adı formda genelde "ANKARA ARABULUCULUK BÜROSU" gibi il+sabit
+    # ifade şeklinde geçiyor. Bulunamazsa (kullanıcının belirttiği en yaygın
+    # durum) sessizce "ANKARA ARABULUCULUK BÜROSU" varsayılanına düşülür -
+    # bu bir ayrıştırma hatası değil, normal bir varsayılan olduğu için
+    # notices'e uyarı EKLENMEZ. Kullanıcı Bilgi Havuzu ekranından her zaman
+    # elle değiştirebilir.
+    buro=first(PATTERNS['arabuluculukBurosu'],ptext)
+    out['arabuluculukBurosu']=re.sub(r'\s+',' ',buro).strip() if buro else 'ANKARA ARABULUCULUK BÜROSU'
     if os.environ.get('TUTANAK_DEBUG_LABELS')=='1':
         for lbl in find_unmatched_labels(ptext):
             notices.append(f'[DEBUG] Tanınmayan etiket: "{lbl}" (değer loglanmadı; farklı bir UYAP form varyasyonu olabilir, LABEL sözlüğüne eklenmesi değerlendirilebilir)')
@@ -1167,6 +1181,7 @@ def update_offsets_exact(xml, edits, old_len, new_text):
                     break
             if not sub_runs:
                 sub_runs = [(line_start, line_end, runs[0][2], runs[0][3])]
+            sub_runs = _bold_block_header_prefix(new_text, line_start, line_end, sub_runs)
             piece = f'<paragraph Alignment="{align}">' if align else '<paragraph>'
             for ns, ne, bold, size in sub_runs:
                 piece += f'<content bold="{bold}" size="{size}" startOffset="{ns}" length="{max(0,ne-ns)}" />'
@@ -1176,6 +1191,51 @@ def update_offsets_exact(xml, edits, old_len, new_text):
 
     new_body = ''.join(out_blocks)
     return xml[:em.start()] + head + new_body + tail + xml[em.end():]
+
+# 2026-09: [karşı taraf bilgileri bloğu] ve [imza bloğu] hesaplanan alanları
+# çok satırlı, TEK bir run'dan (bracket token'ın kendi biçiminden) türeyen
+# metin üretiyor - bu yüzden normalde ya HİÇ kalın ya da TAMAMEN kalın çıkar.
+# Kullanıcı sadece "Diğer Taraf N" / "Taraf N" / "Arabulucu" gibi alt
+# başlıkların kalın, geri kalan (adres/tel/e-posta/isim vb.) verinin normal
+# olmasını istedi. _tutanak_karsi_taraf_blogu / _tutanak_imza_blogu'nun ürettiği
+# metin biçimi SABİT ve bilindiği için (bkz. o fonksiyonlar), burada saf metin
+# eşleştirmesiyle (regex) hangi satırın/satır başının "başlık" sayılacağı
+# tespit ediliyor - ayrı bir işaretleme (sentinel karakter) mekanizmasına
+# gerek kalmadan, tek run'ı gerektiğinde ikiye bölerek.
+_BLOCK_HEADER_FULL_LINE_RE = re.compile(r'^Diğer Taraf \d+\s*$')
+_BLOCK_HEADER_PREFIX_RE = re.compile(r'^(Taraf \d+|Arabulucu)(?=\s*:)')
+
+def _bold_block_header_prefix(new_text, line_start, line_end, sub_runs):
+    """sub_runs TEK bir run'dan geliyorsa (yaygın durum: tüm blok tek bracket
+    run'ından türedi) ve satır metni bilinen bir "blok başlığı" kalıbına
+    uyuyorsa, o run'ı kalın-başlık + normal-geri kalan olarak ikiye böler.
+    Birden fazla run varsa (beklenmeyen/karmaşık durum) dokunmadan aynen
+    döner - güvenli varsayılan budur."""
+    if len(sub_runs) != 1:
+        return sub_runs
+    ns, ne, bold, size = sub_runs[0]
+    line_text = new_text[line_start:line_end]
+    stripped = line_text.rstrip('\r\n')
+    if _BLOCK_HEADER_FULL_LINE_RE.match(stripped):
+        return [(ns, ne, 'true', size)]
+    m = _BLOCK_HEADER_PREFIX_RE.match(stripped)
+    if m:
+        cut = line_start + m.end()
+        if ns < cut < ne:
+            # Başlık kısmı her zaman kalın, geri kalanı (isim/değer/"(e-imza)")
+            # her zaman normal - orijinal bracket run'ının kendisi kalın
+            # yapılmış olsa bile (kullanıcının asıl şikayeti tam olarak buydu:
+            # "komple her kısmı kalın oldu"), burada bilerek ORİJİNAL bold
+            # değeri KORUNMAZ, sabit 'false' kullanılır.
+            return [(ns, cut, 'true', size), (cut, ne, 'false', size)]
+        return sub_runs
+    if bold == 'true':
+        # Başlık kalıbına uymayan bir veri satırı (ör. "Adı Soyadı\t: ..."),
+        # ama tüm blok (bracket'ın kendisi) kalın yapılmıştı -> bu satırı
+        # bilerek normale çeviriyoruz; aksi halde başlık-dışı veri de kalın
+        # kalmaya devam ederdi (kullanıcının şikayet ettiği asıl durum).
+        return [(ns, ne, 'false', size)]
+    return sub_runs
 
 def replace_once(text,patterns,value):
     for p in patterns:
@@ -1764,7 +1824,7 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     values={k:('' if v is None else v) for k,v in values.items()}
     respondents=[{k:('' if v is None else v) for k,v in p.items()} for p in respondents]
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
-            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta']),
+            ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta','arabuluculukBurosu']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
             ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi']),
             ('Harcama Pusulası',['daireBilgisi'])]

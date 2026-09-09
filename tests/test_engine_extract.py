@@ -23,6 +23,7 @@ davranışını ve "ARABULUCU BİLGİLERİ" bölümü GERÇEKTEN var olduğunda 
 hâlâ doğru okunduğunu (olumlu / happy-path senaryo) doğrular.
 """
 import unittest
+import re
 
 from app.documents.engine import extract, section, party_values
 
@@ -350,6 +351,50 @@ class MakeMapperOffsetTests(unittest.TestCase):
         sonraki_a = a.index("SONRAKI_ALAN")
         sonraki_b = b.index("SONRAKI_ALAN")
         self.assertEqual(mp(sonraki_a), sonraki_b)
+
+
+class BlockHeaderBoldTests(unittest.TestCase):
+    """[karşı taraf bilgileri bloğu] ve [imza bloğu] içindeki 'Diğer Taraf N' /
+    'Taraf N' / 'Arabulucu' alt başlıklarının otomatik kalın, geri kalan veri
+    satırlarının normal kalması (2026-09, Nuri'nin talebi üzerine eklendi)."""
+
+    def test_karsi_taraf_ve_imza_bloklarinda_basliklar_kalin(self):
+        from app.documents.engine import (
+            read_udf, fill_custom_template_tracked, update_offsets_exact,
+        )
+
+        data = open("app/templates/udf/anlasmama_son_tutanagi.udf", "rb").read()
+        xml, old, _files = read_udf(data)
+        values = {
+            "basvuruNo": "2026/500", "dosyaNo": "2026/500",
+            "arabulucuAdi": "Zeynep Kaya", "arabulucuTc": "12345678901",
+            "arabulucuSicil": "12345", "arabulucuAdres": "Test",
+            "basvurucuAdiSoyadi": "Ahmet Yılmaz", "basvurucuAdres": "Test Adres",
+            "basvurucuVekili": "", "basvurucuTcKimlik": "11111111110",
+            "uyusmazlik": "İş Hukuku", "baslangicTarihi": "01.01.2026",
+            "bitisTarihi": "01.09.2026", "duzenlemeYeri": "Ankara",
+            "duzenlemeTarihi": "01.09.2026", "talep": "test talep",
+        }
+        respondents = [
+            {"type": "kisi", "tc": "98765432109", "name": "Ali Veli",
+             "address": "Adres 1", "proxy": "", "phone": "5551112233", "tax": ""},
+        ]
+        new_text, edits = fill_custom_template_tracked(old, values, respondents)
+        xml2 = update_offsets_exact(xml, edits, len(old), new_text)
+
+        runs = re.findall(
+            r'<content bold="(true|false)" size="\d+" startOffset="(\d+)" length="(\d+)" />',
+            xml2,
+        )
+        bold_texts = [new_text[int(s):int(s) + int(l)] for b, s, l in runs if b == "true"]
+        normal_texts = [new_text[int(s):int(s) + int(l)] for b, s, l in runs if b == "false"]
+
+        self.assertTrue(any("Diğer Taraf 1" in t for t in bold_texts))
+        self.assertTrue(any(t.strip() == "Taraf 1" for t in bold_texts))
+        self.assertTrue(any(t.strip() == "Arabulucu" for t in bold_texts))
+        # Veri satırları (isim, adres vb.) kalın OLMAMALI.
+        self.assertTrue(any("Ali Veli" in t for t in normal_texts))
+        self.assertFalse(any("Ali Veli" in t for t in bold_texts))
 
 
 if __name__ == "__main__":
