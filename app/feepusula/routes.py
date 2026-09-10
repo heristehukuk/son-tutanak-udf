@@ -3,7 +3,7 @@ from html import escape
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from app.auth.service import require_active_user
-from app.documents.engine import form_state
+from app.documents.engine import form_state, derive_daire_bilgisi
 from app.feepusula.service import build_harcama_pusulasi
 from app.files.service import save_generated
 
@@ -18,7 +18,7 @@ async def build_pusula(request: Request):
     taraf_sayisi = 1 + len(respondents)  # başvurucu dahil toplam
     try:
         xlsx_bytes, uyari, unit_price = build_harcama_pusulasi(
-            daire=values.get("daireBilgisi", ""),
+            daire=derive_daire_bilgisi(values.get("arabuluculukBurosu", "")),
             dosya_turu_text=values.get("dosyaTuru") or values.get("uyusmazlik") or "",
             basvuru_no=values.get("basvuruNo", ""),
             taraf_sayisi=taraf_sayisi,

@@ -19,11 +19,27 @@ FIELDS=[
 ('dosyaTuru','Dosya Türü'),('uyusmazlik','Arabuluculuk Konusu Uyuşmazlık'),('uyusmazlikTuru','Uyuşmazlık Türü'),('talep','Talep'),
 ('baslangicTarihi','Süreç Başlangıç Tarihi'),('bitisTarihi','Süreç Bitiş Tarihi'),
 ('duzenlemeYeri','Tutanak Düzenleme Yeri'),('duzenlemeTarihi','Tutanak Düzenleme Tarihi'),
-('daireBilgisi','Dairesi (Harcama Pusulası için, örn. ANKARA CUMHURİYET BAŞSAVCILIĞI)'),
 ('sonuc','Sonuç'),('gorusmeSekli','Görüşme Şekli'),('gorusmeTarihi','Görüşme Tarihi'),('gorusmeSaati','Görüşme Saati'),('gorusmeAdresi','Görüşme Adresi'),
 ('arabuluculukBurosu','Arabuluculuk Bürosu (şehir/ad)')]
 LABELS=dict(FIELDS)
 LABELS['_userIban']='Arabulucu IBAN (kullanıcı profilinden, otomatik)'
+
+# 2026-09: Harcama Pusulası'ndaki ayrı "Dairesi" kutucuğu kaldırıldı (Nuri'nin
+# talebi) - Cumhuriyet Başsavcılığı adı artık Arabuluculuk Bürosu alanından
+# TÜRETİLİYOR: "... ARABULUCULUK BÜROSU" -> "... CUMHURİYET BAŞSAVCILIĞI"
+# (ör. "ANKARA ARABULUCULUK BÜROSU" -> "ANKARA CUMHURİYET BAŞSAVCILIĞI").
+_ARABULUCULUK_BUROSU_SUFFIX_RE = re.compile(r'ARABULUCULUK\s+BÜROSU', re.I)
+
+def derive_daire_bilgisi(arabuluculuk_burosu):
+    v = str(arabuluculuk_burosu or '').strip()
+    if not v:
+        return ''
+    if _ARABULUCULUK_BUROSU_SUFFIX_RE.search(v):
+        return _ARABULUCULUK_BUROSU_SUFFIX_RE.sub('CUMHURİYET BAŞSAVCILIĞI', v).strip()
+    # Beklenmedik bir biçimde geldiyse (ör. kullanıcı büro alanını elle farklı
+    # yazdıysa), en azından olduğu gibi değeri döndür - sessizce boş bırakmak
+    # yerine kullanıcı en azından bir şey görüp düzeltebilsin.
+    return v
 RESP_FIELDS=['type','tc','tax','name','address','proxy','phone','email']
 RESP_LABELS={'type':'Taraf Türü','tc':'T.C. Kimlik No','tax':'Vergi No','name':'Adı Soyadı / Unvanı','address':'Adres','proxy':'Vekili','phone':'Telefon','email':'E-posta'}
 MAX_RESP=10
@@ -1826,8 +1842,7 @@ def render_editor(filename,values,respondents,locked=set(),locked_resp=set(),mes
     groups=[('Dosya Bilgileri',['basvuruNo','dosyaNo']),
             ('Arabulucu',['arabulucuAdi','arabulucuTc','arabulucuSicil','arabulucuAdres','arabulucuTelefon','arabulucuEposta','arabuluculukBurosu']),
             ('Uyuşmazlık / Süreç Bilgileri',['dosyaTuru','uyusmazlik','uyusmazlikTuru','talep','baslangicTarihi','bitisTarihi','duzenlemeYeri','duzenlemeTarihi','sonuc']),
-            ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi']),
-            ('Harcama Pusulası',['daireBilgisi'])]
+            ('Görüşme',['gorusmeSekli','gorusmeTarihi','gorusmeSaati','gorusmeAdresi'])]
     # Belgeye hangi alanın esas alındığını netleştiren kısa ipuçları.
     HINTS={
         'dosyaTuru':'Son tutanağa "Arabuluculuk Konusu Uyuşmazlık" olarak esas bu alan yazılır.',
