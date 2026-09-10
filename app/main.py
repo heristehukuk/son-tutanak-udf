@@ -445,8 +445,8 @@ def _build_davet_outputs(data, values, respondents, u):
         v['_userIban']=u.get('iban') or ''
         v['_recipient']=recipient
         v['_davetRole']='basvurucu' if role=='Başvurucu' else 'karsi_taraf'
-        new,edits=fill_custom_template_tracked(old,v,respondents)
-        out_xml=update_offsets_exact(xml,edits,len(old),new)
+        new,edits,block_ranges=fill_custom_template_tracked(old,v,respondents)
+        out_xml=update_offsets_exact(xml,edits,len(old),new,block_ranges)
         result=build_udf(files,out_xml,old,new)
         label=role
         filename=_safe_download_name(f"Davet Mektubu - {recipient.get('name') or role}")+".udf"
@@ -524,8 +524,8 @@ async def build(request:Request):
             if recognized:is_bracket_template=True
         if is_bracket_template:
             values["_userIban"]=u["iban"] or ""
-            new,edits=fill_custom_template_tracked(old,values,respondents_for_doc)
-            xml=update_offsets_exact(xml,edits,len(old),new)
+            new,edits,block_ranges=fill_custom_template_tracked(old,values,respondents_for_doc)
+            xml=update_offsets_exact(xml,edits,len(old),new,block_ranges)
             result=build_udf(files,xml,old,new)
         else:
             applicant={"type":"kurum" if values.get("basvurucuVergiNo") else "kisi",

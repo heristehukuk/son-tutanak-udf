@@ -1080,6 +1080,15 @@ def fill_custom_template_tracked(text, values, respondents):
     kalkar.
     """
     edits = []
+    block_ranges = []  # [(new_start,new_end), ...] - sadece 'karşı taraf bilgileri bloğu'
+                        # ve 'imza bloğu' gibi çok satırlı, başlık-kalınlaştırma
+                        # override'ının uygulanması gereken hesaplanan alanların
+                        # ürettiği metnin new_text içindeki aralığı. Bu SADECE bu
+                        # aralıklar içinde satır bazlı başlık tespiti yapılmasını
+                        # sağlamak için var - aksi halde belgedeki HER tek-satırlık
+                        # kalın paragraf (ör. gerçek "KARŞI TARAF BİLGİLERİ" başlığı)
+                        # yanlışlıkla normale çevrilir (2026-09'da yaşanan gerçek
+                        # regresyon buydu).
     out = []
     last = 0
     new_pos = 0
@@ -1088,11 +1097,13 @@ def fill_custom_template_tracked(text, values, respondents):
         out.append(gap)
         new_pos += len(gap)
         res = resolve_bracket_token(m.group(1))
+        is_block = False
         if res is None:
             value = ''
         elif res[0] == 'field':
             value = values.get(res[1]) or ''
         elif res[0] == 'computed':
+            is_block = res[1] in ('karsitarafbilgileriblogu', 'imzablogu')
             try:
                 value = COMPUTED_BRACKETS[res[1]](values, respondents)
             except Exception:
@@ -1102,14 +1113,16 @@ def fill_custom_template_tracked(text, values, respondents):
             value = respondents[idx].get(rf) or '' if 0 <= idx < len(respondents) else ''
         out.append(value)
         edits.append((m.start(), m.end(), new_pos, new_pos + len(value)))
+        if is_block:
+            block_ranges.append((new_pos, new_pos + len(value)))
         new_pos += len(value)
         last = m.end()
     out.append(text[last:])
     new_text = ''.join(out)
-    return new_text, edits
+    return new_text, edits, block_ranges
 
 
-def update_offsets_exact(xml, edits, old_len, new_text):
+def update_offsets_exact(xml, edits, old_len, new_text, block_ranges=None):
     """update_offsets'ın deterministik sürümü. Fuzzy diff (difflib.SequenceMatcher)
     yerine fill_custom_template_tracked'dan gelen kesin (old_start,old_end,new_start,new_end)
     listesini kullanarak her startOffset/length çiftini eşler. Metnin nerede
@@ -1197,7 +1210,8 @@ def update_offsets_exact(xml, edits, old_len, new_text):
                     break
             if not sub_runs:
                 sub_runs = [(line_start, line_end, runs[0][2], runs[0][3])]
-            sub_runs = _bold_block_header_prefix(new_text, line_start, line_end, sub_runs)
+            if block_ranges and any(line_start < be and bs < line_end for bs, be in block_ranges):
+                sub_runs = _bold_block_header_prefix(new_text, line_start, line_end, sub_runs)
             piece = f'<paragraph Alignment="{align}">' if align else '<paragraph>'
             for ns, ne, bold, size in sub_runs:
                 piece += f'<content bold="{bold}" size="{size}" startOffset="{ns}" length="{max(0,ne-ns)}" />'

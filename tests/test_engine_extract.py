@@ -379,8 +379,8 @@ class BlockHeaderBoldTests(unittest.TestCase):
             {"type": "kisi", "tc": "98765432109", "name": "Ali Veli",
              "address": "Adres 1", "proxy": "", "phone": "5551112233", "tax": ""},
         ]
-        new_text, edits = fill_custom_template_tracked(old, values, respondents)
-        xml2 = update_offsets_exact(xml, edits, len(old), new_text)
+        new_text, edits, block_ranges = fill_custom_template_tracked(old, values, respondents)
+        xml2 = update_offsets_exact(xml, edits, len(old), new_text, block_ranges)
 
         runs = re.findall(
             r'<content bold="(true|false)" size="\d+" startOffset="(\d+)" length="(\d+)" />',
@@ -395,6 +395,46 @@ class BlockHeaderBoldTests(unittest.TestCase):
         # Veri satırları (isim, adres vb.) kalın OLMAMALI.
         self.assertTrue(any("Ali Veli" in t for t in normal_texts))
         self.assertFalse(any("Ali Veli" in t for t in bold_texts))
+
+    def test_bloklar_disindaki_kalin_baslik_etkilenmez(self):
+        """2026-09 regresyonu: block_ranges olmadan _bold_block_header_prefix
+        TÜM tek-satırlık kalın paragraflara (ör. gerçek 'KARŞI TARAF BİLGİLERİ'
+        başlığının kendisi) uygulanıyor ve onları yanlışlıkla normale
+        çeviriyordu. Bu test, sadece [karşı taraf bilgileri bloğu]/[imza
+        bloğu] aralıkları DIŞINDAKİ kalın metnin dokunulmadan kaldığını
+        doğrular."""
+        from app.documents.engine import (
+            read_udf, fill_custom_template_tracked, update_offsets_exact,
+        )
+
+        # "KARŞI TARAF BİLGİLERİ" başlığı [KARŞI TARAF BİLGİLERİ BLOĞU]
+        # bracket'ından HEMEN ÖNCE, ayrı bir statik satır olarak kalın.
+        old = (
+            "DOSYA NO\t: [dosya no]\n"
+            "KARŞI TARAF BİLGİLERİ\n"
+            "[karşı taraf bilgileri bloğu]\n"
+        )
+        xml = (
+            '<elements>'
+            '<paragraph><content bold="false" size="12" startOffset="0" length="22" /></paragraph>\n'
+            '<paragraph><content bold="true" size="12" startOffset="22" length="22" /></paragraph>\n'
+            '<paragraph><content bold="false" size="12" startOffset="44" length="30" /></paragraph>\n'
+            '</elements>'
+        )
+        values = {"dosyaNo": "2026/1"}
+        respondents = [
+            {"type": "kisi", "tc": "98765432109", "name": "Ali Veli",
+             "address": "Adres 1", "proxy": "", "phone": "5551112233", "tax": ""},
+        ]
+        new_text, edits, block_ranges = fill_custom_template_tracked(old, values, respondents)
+        xml2 = update_offsets_exact(xml, edits, len(old), new_text, block_ranges)
+
+        runs = re.findall(
+            r'<content bold="(true|false)" size="\d+" startOffset="(\d+)" length="(\d+)" />',
+            xml2,
+        )
+        bold_texts = [new_text[int(s):int(s) + int(l)] for b, s, l in runs if b == "true"]
+        self.assertTrue(any("KARŞI TARAF BİLGİLERİ" in t for t in bold_texts))
 
 
 if __name__ == "__main__":
