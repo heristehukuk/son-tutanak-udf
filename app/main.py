@@ -31,7 +31,7 @@ from app.documents.engine import (
     build_meeting_sentence, replace_final_legal_paragraph, fill_general, replace_talep_in_narrative,
     update_offsets, rebuild_region_paragraphs, build_udf, scan_custom_template, fill_custom_template,
     fill_custom_template_tracked, update_offsets_exact,
-    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND, MAX_RESP, inject_case_binding,
+    discover_folder_templates, FIXED_TEMPLATE_DOC_KIND, MAX_RESP, inject_case_binding, TEMPLATE_DIR,
 )
 from app.web import page
 from app.supabase_client import supabase_health
@@ -503,6 +503,158 @@ def _build_davet_outputs(data, values, respondents, u):
         filename=_safe_download_name(f"Davet Mektubu - {recipient.get('name') or role}")+".udf"
         outputs.append((label,filename,result))
     return outputs
+
+def _build_bracket_document(data, values, respondents_for_doc):
+    """Köşeli parantezli (bracket) UDF şablonlarını doldurup üretir.
+    /build içindeki is_bracket_template dalıyla AYNI mantık; paket üretiminde
+    (Ücret Üst Yazısı, Üst Yazı - Son Tutanak gibi) tekrar kullanılmak üzere
+    ayrı bir fonksiyona çıkarıldı."""
+    xml, old, files = read_udf(data)
+    new, edits, block_ranges = fill_custom_template_tracked(old, values, respondents_for_doc)
+    xml2 = update_offsets_exact(xml, edits, len(old), new, block_ranges)
+    return build_udf(files, xml2, old, new)
+
+def _build_fixed_document(data, values, respondents_for_doc):
+    """Eski (bracket olmayan) sabit şablonları doldurup üretir. /build
+    içindeki else dalıyla AYNI mantık; paket üretiminde (Son Tutanak,
+    Anlaşmama Son Tutanağı) tekrar kullanılmak üzere ayrı bir fonksiyona
+    çıkarıldı."""
+    xml, old, files = read_udf(data)
+    applicant={"type":"kurum" if values.get("basvurucuVergiNo") else "kisi",
+               "tax":values.get("basvurucuVergiNo",""),"name":values.get("basvurucuAdiSoyadi",""),
+               "tc":values.get("basvurucuTcKimlik",""),"address":values.get("basvurucuAdres",""),
+               "proxy":values.get("basvurucuVekili",""),"phone":values.get("basvurucuTelefon",""),
+               "email":values.get("basvurucuEposta","")}
+    arb={"name":values.get("arabulucuAdi",""),"sicil":values.get("arabulucuSicil","")}
+    new=set_parties_and_signatures(old,applicant,respondents_for_doc,arb)
+    new=replace_meeting_paragraph(new,build_meeting_sentence(values,{**applicant,"_arb_name":arb["name"]},respondents_for_doc))
+    new=replace_final_legal_paragraph(new,values); new=fill_general(new,values)
+    if values.get("talep"):new=replace_talep_in_narrative(new,values["talep"])
+    xml2=update_offsets(xml,old,new)
+    xml2=rebuild_region_paragraphs(xml2,old,new,"KARŞI TARAF BİLGİLERİ","Arabuluculuk Konusu Uyuşmazlık")
+    xml2=rebuild_region_paragraphs(xml2,old,new,"İMZALAR",None)
+    return build_udf(files,xml2,old,new)
+
+def _find_folder_template(doc_kind):
+    """discover_folder_templates() içinden verilen doc_kind'e ait İLK şablonu
+    döner (choice_key, entry) ya da bulunamazsa (None, None)."""
+    for k,v in discover_folder_templates().items():
+        if v["doc_kind"]==doc_kind:
+            return k,v
+    return None,None
+
+@app.post("/build/package")
+async def build_package(request:Request):
+    """'📦 Belge Paketini Tek Seferde Oluştur' butonu: Davet Mektubu (her taraf
+    için ayrı), Ücret Üst Yazısı, Üst Yazı - Son Tutanak ve seçili Son Tutanak
+    türünü TEK bir işlemde üretip tek bir zip olarak indirir.
+
+    Son Tutanak türleri BİRBİRİNİN YERİNE GEÇER (aynı anda iki ayrı "son
+    tutanak" üretilmez): formdaki "Belge türü" seçimi hangisiyse (Anlaşma /
+    Anlaşmama / Anlaşma Belgesi) SADECE o üretilir. Tek istisna: "Anlaşma Son
+    Tutanağı" seçiliyse, anlaşma halinde ayrıca gerekli olan "Anlaşma Belgesi"
+    otomatik olarak pakete eklenir - bu ikisi birbirinin yerine geçmez, ikisi
+    de anlaşma durumunda ayrı ayrı gereklidir.
+
+    /build route'undaki tekli üretim akışına DOKUNULMADI; bu route sadece aynı
+    dolum mantığını (_build_bracket_document / _build_fixed_document /
+    _build_davet_outputs) art arda çağırır."""
+    u=require_user(request)
+    if not u:return RedirectResponse("/auth/login",303)
+    try:
+        form=await request.form(); values,respondents,locked,locked_resp=form_state(form)
+        respondents_for_doc=[r for r in respondents if not r.get("exclude")]
+        plan=get_plan(u["plan_id"])
+        if not feature_enabled(plan,"documents.udf"):return HTMLResponse("Planınız UDF oluşturmayı desteklemiyor.",403)
+
+        # Pakette üretilecek Son Tutanak: formdaki mevcut şablon seçimi 3 sabit
+        # şablondan (anlaşma/anlaşmama/anlaşma belgesi) biriyse o kullanılır,
+        # değilse (ör. "custom" ya da bracket bir şablon seçiliyse ya da hiç
+        # seçim yapılmamışsa) varsayılan olarak Anlaşmama Son Tutanağı esas
+        # alınır. "Anlaşma Son Tutanağı" seçiliyse, anlaşma durumunda ayrıca
+        # gereken "Anlaşma Belgesi" de otomatik eklenir - diğer seçimlerde
+        # (Anlaşmama / Anlaşma Belgesi / varsayılan) ek bir son tutanak
+        # ÜRETİLMEZ.
+        raw_choice=str(form.get("template_choice",""))
+        son_tutanak_choice = raw_choice if raw_choice in TEMPLATES else "anlasmama_son_tutanagi"
+        son_tutanak_keys=[son_tutanak_choice]
+        if son_tutanak_choice=="anlasma_son_tutanagi":
+            son_tutanak_keys.append("anlasma_belgesi")
+        if not values.get("sonuc"):values["sonuc"]=standard_result(son_tutanak_choice)
+
+        davet_key,davet_entry=_find_folder_template("davet_mektubu")
+        ucret_key,ucret_entry=_find_folder_template("ust_yazi_ucret_pusulasi")
+        ustyazi_key,ustyazi_entry=_find_folder_template("ust_yazi_son_tutanak")
+        missing=[]
+        if not davet_entry:missing.append("Davet Mektubu")
+        if not ucret_entry:missing.append("Ücret Üst Yazısı")
+        if not ustyazi_entry:missing.append("Üst Yazı - Son Tutanak")
+        for key in son_tutanak_keys:
+            if not (TEMPLATE_DIR/TEMPLATES[key][1]).exists():missing.append(TEMPLATES[key][0])
+        if missing:
+            return HTMLResponse("Paket için gereken şu şablon(lar) sunucuda bulunamadı: "+", ".join(missing)+".",500)
+
+        cid=str(form.get("case_id") or "")
+        case=repos.cases.get(cid) if cid else None
+        if cid and (not case or case["owner_id"]!=u["id"]):
+            return HTMLResponse("Dosya bulunamadı veya erişim yetkiniz yok.",403)
+
+        # Davet mektubu, dolu adı olan her karşı taraf + başvurucu için ayrı
+        # dosya üretir; kota tüketimini ÜRETMEDEN ÖNCE tek seferde hesaplayıp
+        # kontrol ediyoruz - böylece kota yetmiyorsa hiçbir belge üretilmeden
+        # (yarım paket oluşmadan) net bir hata döner.
+        davet_recipient_count = 1 + sum(1 for r in respondents_for_doc if str(r.get("name") or "").strip())
+        total_docs = davet_recipient_count + 2 + len(son_tutanak_keys)  # + ücret üst yazı, üst yazı son tutanak, son tutanak(lar)
+        if not consume(u["id"],"udf",plan["limits"].get("udf.monthly"),amount=total_docs):
+            return HTMLResponse(f"Bu paket {total_docs} belge üretir ve aylık UDF oluşturma limitiniz buna yetmiyor.",429)
+
+        source_name=values.get("basvurucuAdiSoyadi") or values.get("dosyaNo") or "Dosya"
+        archive=io.BytesIO()
+        used=set()
+        generated=[]  # (label, filename, bytes, doc_kind) - save_generated için
+        with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as zf:
+            def _write(filename, result, label, doc_kind):
+                nonlocal used
+                base=filename; n=2
+                while filename in used:
+                    filename=f"{Path(base).stem} ({n}){Path(base).suffix}"; n+=1
+                used.add(filename)
+                zf.writestr(filename,result)
+                generated.append((label,filename,result,doc_kind))
+
+            davet_data=davet_entry["path"].read_bytes()
+            for role,filename,result in _build_davet_outputs(davet_data,values,respondents_for_doc,u):
+                _write(filename,result,f"Davet Mektubu - {role}","davet_mektubu")
+
+            ucret_data=ucret_entry["path"].read_bytes()
+            v_ucret=dict(values); v_ucret["_userIban"]=u.get("iban") or ""
+            result=_build_bracket_document(ucret_data,v_ucret,respondents_for_doc)
+            _write(_safe_download_name("Ücret Üst Yazısı")+".udf",result,"Ücret Üst Yazısı","ust_yazi_ucret_pusulasi")
+
+            for key in son_tutanak_keys:
+                st_data=(TEMPLATE_DIR/TEMPLATES[key][1]).read_bytes()
+                result=_build_fixed_document(st_data,values,respondents_for_doc)
+                _write(_safe_download_name(TEMPLATES[key][0])+".udf",result,TEMPLATES[key][0],FIXED_TEMPLATE_DOC_KIND)
+
+            uy_data=ustyazi_entry["path"].read_bytes()
+            v_uy=dict(values); v_uy["_userIban"]=u.get("iban") or ""
+            result=_build_bracket_document(uy_data,v_uy,respondents_for_doc)
+            _write(_safe_download_name("Üst Yazı - Son Tutanak")+".udf",result,"Üst Yazı - Son Tutanak","ust_yazi_son_tutanak")
+
+        if cid and case:
+            for label,filename,result,doc_kind in generated:
+                save_generated(u["id"],cid,result,label,doc_kind=doc_kind)
+            persist_case_update(cid,case,values,locked=locked | get_locked_fields(case),actor_id=u["id"])
+            from app.folders.service import update_case_folder_name, ensure_case_folders
+            ensure_case_folders(u["id"],cid); update_case_folder_name(u["id"],cid)
+
+        archive.seek(0)
+        zip_name=_safe_download_name(f"Belge Paketi - {source_name}")+".zip"
+        quoted=urllib.parse.quote(zip_name)
+        ascii_fallback=re.sub(r'[^A-Za-z0-9_.-]','_',zip_name) or "belge_paketi.zip"
+        return StreamingResponse(archive,media_type="application/zip",
+            headers={"Content-Disposition":f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"})
+    except Exception as e:return HTMLResponse(f"Belge paketi oluşturulurken hata: {e}",500)
 
 @app.post("/build")
 async def build(request:Request):
