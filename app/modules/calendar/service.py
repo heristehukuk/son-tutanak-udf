@@ -10,12 +10,15 @@ tablosu (repos.cases) üzerinde çalışır; kendine ait sadece `calendar_events
 tablosunu (repos.calendar_events) tutar, `case_id` doğrudan `cases.id`'dir.
 """
 import json
+import logging
 from datetime import date, datetime
 from uuid import uuid4
 from app.database_layer import repos
 from app.files.service import create_case
 from app.modules.tasks.storage import update_case_info, create_standard_tasks
 from .calculator import calculate_deadlines, calculate_remaining_days
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso():
@@ -42,6 +45,7 @@ def _case_to_calendar_dict(case):
         "case_no": case.get("file_no") or "",
         "applicant_name": case.get("title") or "",
         "file_type": file_type,
+        "status": case.get("status") or "open",
         "start_date": start,
         "normal_due_date": deadlines["normal_due_date"].isoformat() if deadlines else None,
         "extended_due_date": deadlines["extended_due_date"].isoformat() if deadlines else None,
@@ -101,6 +105,36 @@ class CalendarService:
             "tasks_existing": len(repos.tasks.list_for_case(cid)),
             "tasks_result": task_result.get("reason", "ok"),
         }
+
+    def ensure_auto_scheduled(self, owner_id, case_id, case, data):
+        """Bilgi Havuzu'nda 'Süreç Başlangıç Tarihi' kutucuğu DOLU ise, kullanıcı
+        ayrıca '📅 Takvime Ekle / Görevleri Oluştur' butonuna basmasına gerek
+        kalmadan, dosya her kaydedildiğinde (persist_case_update her çağrıldığında)
+        takvim hatırlatıcılarını ve 6 standart görevi otomatik oluşturur/günceller.
+
+        Gerekli diğer alanlardan (başvurucu adı, dosya türü) biri eksikse ya da
+        tarih geçersizse SESSİZCE hiçbir şey yapmaz - bu pasif bir otomasyondur,
+        kullanıcının normal kaydetme akışını asla bir hata ile kesmemelidir.
+        `add_case()` içindeki mantık idempotenttir (eski takvim olaylarını silip
+        yeniden kurar, standart görevleri tekrar oluşturmaz) - bu yüzden her
+        kaydetmede güvenle tekrar çağrılabilir."""
+        from app.modules.tasks.storage import _parse_start
+        baslangic_raw = data.get("baslangicTarihi") or case.get("start_date") or ""
+        start = _parse_start(str(baslangic_raw))
+        if not start:
+            return None
+        applicant = str(data.get("basvurucuAdiSoyadi") or case.get("title") or "").strip()
+        if not applicant or applicant in {"Yeni Dosya", "Yeni dosya"}:
+            return None
+        file_type = str(data.get("dosyaTuru") or case.get("file_type") or "").strip()
+        if not file_type:
+            return None
+        case_no = data.get("dosyaNo") or case.get("file_no") or ""
+        try:
+            return self.add_case(owner_id, case_no, applicant, file_type, start, main_case_id=case_id, case_data=data)
+        except Exception:
+            logger.warning("Otomatik takvim/görev oluşturma başarısız (case_id=%s).", case_id, exc_info=True)
+            return None
 
     def get_case(self, case_id, owner_id=None):
         case = repos.cases.get(case_id)

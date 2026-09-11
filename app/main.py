@@ -118,6 +118,54 @@ async def health():
 async def supabase_health_check():
     return supabase_health()
 
+def _build_deadline_widget_html(u):
+    """Ana sayfada, belge yükleme formunun hemen altında gösterilen orta
+    boyutlu, tam gömülü 'Süre Takibi' kutusu. Herhangi bir manuel 'takvime
+    ekle' adımı GEREKTİRMEZ - Bilgi Havuzu'nda Süreç Başlangıç Tarihi dolu
+    olan (ve tamamlanmamış) her dosya için CalendarService.list_cases()
+    zaten normal/ek süre bitişlerini hesaplıyor; burada sadece en yakın
+    tarihe göre sıralanıp özetleniyor."""
+    from html import escape as esc
+    from datetime import date as _date
+    from app.modules.calendar.service import CalendarService
+    from app.modules.calendar.calculator import calculate_remaining_days
+    items = [c for c in CalendarService().list_cases(u["id"])
+             if c.get("status") != "completed" and c.get("normal_due_date")]
+    if not items:
+        return ('<div class="card"><h2>⏰ Süre Takibi</h2>'
+                '<p class="hint">Süreç başlangıç tarihi girilmiş aktif bir dosya bulunmuyor. '
+                'Bilgi Havuzu\'nda "Süreç Başlangıç Tarihi" kutucuğunu doldurup kaydettiğinizde '
+                'süreler burada otomatik görünecek.</p></div>')
+    today = _date.today()
+    for it in items:
+        due = _date.fromisoformat(it["normal_due_date"])
+        it["_due"] = due
+        it["_remaining"] = calculate_remaining_days(due, today)
+    items.sort(key=lambda x: x["_remaining"])
+
+    def _tag(remaining):
+        if remaining < 0:
+            return f'<span class="dl-tag dl-expired">🔴 {abs(remaining)} gün gecikti</span>'
+        if remaining == 0:
+            return '<span class="dl-tag dl-today">🟠 Bugün doluyor</span>'
+        if remaining <= 7:
+            return f'<span class="dl-tag dl-soon">🟡 {remaining} gün kaldı</span>'
+        return f'<span class="dl-tag dl-ok">🟢 {remaining} gün kaldı</span>'
+
+    nearest = items[0]
+    nearest_label = (f'{abs(nearest["_remaining"])} gün gecikti' if nearest["_remaining"] < 0
+                      else ('Bugün doluyor' if nearest["_remaining"] == 0 else f'{nearest["_remaining"]} gün kaldı'))
+    hero = (f'<div class="deadline-hero"><div class="num" style="{"color:#a11" if nearest["_remaining"]<0 else ""}">{esc(nearest_label)}</div>'
+            f'<div>En yakın süre — <b>{esc(nearest.get("case_no") or "Dosya No yok")}</b> · {esc(nearest.get("applicant_name") or "")}'
+            f'<br><span class="hint">Normal süre sonu: {nearest["_due"].strftime("%d/%m/%Y")}</span></div></div>')
+    rows = "".join(
+        f'<div class="deadline-row"><span>{esc(it.get("case_no") or "Dosya No yok")} · {esc(it.get("applicant_name") or "")}</span>{_tag(it["_remaining"])}</div>'
+        for it in items[1:6]
+    )
+    more_note = (f'<p class="hint">+{len(items)-6} dosya daha. Tümü için <a href="/calendar">Takvim</a>.</p>'
+                 if len(items) > 6 else '')
+    return f'<div class="card"><h2>⏰ Süre Takibi</h2>{hero}{rows}{more_note}</div>'
+
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
     u=current_user(request)
@@ -156,6 +204,7 @@ async def home(request:Request):
     <div class="stat"><span class="stat-num">{_fmt_amount(stats["amount_this_month"])}</span><span class="stat-label">Bu Ay Ücret</span></div>
     <div class="stat"><span class="stat-num">{_fmt_amount(stats["amount_total"])}</span><span class="stat-label">Toplam Ücret</span></div>
     </div></div>'''
+    deadline_widget_html=_build_deadline_widget_html(u)
     return page("Son Tutanak UDF Asistanı",
     stats_html+
     f"""<div class="card"><h1>Son Tutanak UDF Asistanı v17</h1><p>Hoş geldiniz, {u["display_name"]}.</p>
@@ -163,7 +212,9 @@ async def home(request:Request):
     <label>Başvuru formu / kaynak belge</label>
     <input type="file" name="file" accept=".udf,.pdf,.jpg,.jpeg,.png" required>
     <button>Belgeyi Analiz Et</button></form>
-    <p><a href="/files/">Dosyalarım</a> · <a href="/tasks/">Görevler</a> · <a href="/calendar">Takvim</a> ·
+    </div>"""+
+    deadline_widget_html+
+    f"""<div class="card"><p><a href="/files/">Dosyalarım</a> · <a href="/tasks/">Görevler</a> · <a href="/calendar">Takvim</a> ·
     <a href="/messages/">Mesajlar{f' <span class="badge">{unread}</span>' if (unread:=repos.messages.count_unread(u["id"])) else ''}</a> ·
     <a href="/plans/">Planlar</a>
     {' · <a href="/admin/">Admin</a>' if u["is_super_admin"] else ''}</p></div>""")

@@ -3,7 +3,10 @@ from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from app.auth.service import require_active_user
 from app.web import page
-from app.customtemplates.service import create_template, list_visible_templates, delete_template
+from app.customtemplates.service import (
+    create_template, list_visible_templates, delete_template,
+    get_template, get_template_bytes, can_use_template, render_preview_html,
+)
 
 router = APIRouter()
 
@@ -16,6 +19,7 @@ def _template_card(t, user):
     del_btn = (f'<form action="/templates/{escape(t["id"])}/delete" method="post" '
                f'onsubmit="return confirm(\'Bu şablonu silmek istediğinize emin misiniz?\')">'
                f'<button class="secondary">Sil</button></form>') if can_delete else ""
+    preview_btn = f'<a href="/templates/{escape(t["id"])}/preview"><button class="secondary">🔍 Önizle</button></a>'
     labels={
         "son_tutanak":"Son Tutanak",
         "davet_mektubu":"Davet Mektubu",
@@ -27,7 +31,7 @@ def _template_card(t, user):
     return (f'<div class="card"><h3>{escape(t["name"])}</h3>'
             f'<p class="hint">{escape(owner_badge)} · {escape(kind)}</p>'
             f'<p>{len(t.get("recognized") or [])} tanınan alan · {len(t.get("unrecognized") or [])} tanınmayan ifade</p>'
-            f'{del_btn}</div>')
+            f'<div class="actions">{preview_btn}{del_btn}</div></div>')
 
 @router.get("/", response_class=HTMLResponse)
 async def list_templates(request: Request):
@@ -85,14 +89,43 @@ async def upload_template(request: Request, name: str = Form(...), doc_kind: str
         return HTMLResponse(f"Şablon okunamadı: {e}", 400)
     rec_html = "".join(f"<li>[{escape(r['raw'])}] → {escape(r['target'])}</li>" for r in recognized) or "<li>Hiçbir alan tanınmadı.</li>"
     unrec_html = "".join(f"<li>[{escape(r)}] — tanınmadı, belgede boş kalacak</li>" for r in unrecognized)
+    try:
+        preview_html = render_preview_html(data)
+    except Exception as e:
+        preview_html = f'<p class="err">Önizleme oluşturulamadı: {escape(str(e))}</p>'
     body = f"""<h1>Şablon Kaydedildi</h1>
     <div class="card narrow">
     <p><b>{escape(name)}</b> kaydedildi{' ve tüm kullanıcılarla paylaşıldı.' if shared else '.'}</p>
     <h3>Tanınan Alanlar</h3><ul>{rec_html}</ul>
     {f'<h3>Tanınmayan İfadeler</h3><ul>{unrec_html}</ul>' if unrecognized else ''}
     <p><a href="/templates/"><button>Şablonlarıma Dön</button></a></p>
+    </div>
+    <div class="card">
+    <h3>🔍 Canlı Önizleme (örnek verilerle)</h3>
+    <p class="preview-legend"><mark class="fill-ok">Yeşil</mark> alanlar dolduruldu · <mark class="fill-warn">Kırmızı</mark> ifadeler tanınmadı, gerçek belgede boş kalacak.</p>
+    <div class="preview-box">{preview_html}</div>
     </div>"""
     return page("Şablon Kaydedildi", body)
+
+@router.get("/{template_id}/preview", response_class=HTMLResponse)
+async def preview_template(request: Request, template_id: str):
+    u = _current_user(request)
+    if not u: return HTMLResponse("Giriş yapmalısınız.", 401)
+    row = get_template(template_id)
+    if not row or not can_use_template(row, u):
+        return HTMLResponse("Bu şablona erişim yetkiniz yok.", 403)
+    try:
+        data = get_template_bytes(row)
+        preview_html = render_preview_html(data)
+    except Exception as e:
+        preview_html = f'<p class="err">Önizleme oluşturulamadı: {escape(str(e))}</p>'
+    body = f"""<h1>{escape(row["name"])} — Canlı Önizleme</h1>
+    <div class="card">
+    <p class="preview-legend"><mark class="fill-ok">Yeşil</mark> alanlar dolduruldu · <mark class="fill-warn">Kırmızı</mark> ifadeler tanınmadı, gerçek belgede boş kalacak.</p>
+    <div class="preview-box">{preview_html}</div>
+    </div>
+    <p><a href="/templates/"><button class="secondary">Şablonlarıma Dön</button></a></p>"""
+    return page(f"{row['name']} — Önizleme", body)
 
 @router.post("/{template_id}/delete")
 async def remove_template(request: Request, template_id: str):

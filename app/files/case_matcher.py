@@ -188,6 +188,20 @@ def persist_case_update(cid, case, data, locked=None, actor_id=None):
     except Exception:
         logger.warning("Case veri geçmişi kaydedilemedi (case_id=%s).", cid, exc_info=True)
     repos.cases.update(cid, update)
+    # Bilgi Havuzu'nda "Süreç Başlangıç Tarihi" kutucuğu doluysa, kullanıcı
+    # elle "📅 Takvime Ekle" butonuna basmadan takvim hatırlatıcıları ve
+    # standart görevler burada otomatik oluşturulur/güncellenir. Bu, TÜM
+    # kaydetme akışlarının (build, merge/resolve, davet mektubu, bilgi
+    # havuzundan doğrudan kaydetme) ortak geçtiği tek nokta olduğu için
+    # buraya eklendi. Hata sessizce yutulur - otomasyon asıl kaydetme
+    # işlemini asla bozmamalı.
+    try:
+        from app.modules.calendar.service import CalendarService
+        owner_id = case.get("owner_id")
+        if owner_id:
+            CalendarService().ensure_auto_scheduled(owner_id, cid, case, data)
+    except Exception:
+        logger.warning("Otomatik takvim planlaması denenirken hata oluştu (case_id=%s).", cid, exc_info=True)
 
 
 def _record_case_data_history(cid, case, data, actor_id=None):

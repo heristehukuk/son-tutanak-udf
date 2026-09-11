@@ -494,6 +494,48 @@ def fill_custom_template(text, values, respondents):
         return ''
     return BRACKET_RE.sub(repl, text)
 
+# Şablon canlı önizlemesinde kullanılan görünmez işaretleyiciler. Özel kullanım
+# alanı (private use area) karakterleri seçildi çünkü: 1) gerçek belge
+# metninde asla doğal olarak geçmezler, 2) udf_plain()'in etiket temizleme
+# regex'i (<[^>]+>) bunlara dokunmaz, 3) html.escape() bunları değiştirmez -
+# bu yüzden CDATA metninden HTML'e giden tüm dönüşüm zincirini bozulmadan
+# atlatabiliyorlar.
+PREVIEW_OK_OPEN='\ue001'; PREVIEW_OK_CLOSE='\ue002'
+PREVIEW_WARN_OPEN='\ue003'; PREVIEW_WARN_CLOSE='\ue004'
+
+def fill_custom_template_preview(text, values, respondents):
+    """fill_custom_template ile AYNI çözümleme mantığını kullanır, ama gerçek
+    belge üretiminin aksine iki şeyi FARKLI yapar:
+      1) Tanınan alanlar, örnek (mock) değerle doldurulup görünmez
+         işaretleyicilerle sarılır (arayüzde yeşil vurgu olacak) - alan
+         boşsa parantez içinde etiket adı gösterilir (ör. "(Dosya No)").
+      2) Tanınmayan ifadeler fill_custom_template()'teki gibi SESSİZCE
+         SİLİNMEZ; olduğu gibi bırakılıp ayrı işaretleyicilerle sarılır
+         (kırmızı vurgu) - böylece şablon yazarı, gerçek üretimde hangi
+         ifadenin boş kalacağını yükleme anında görür."""
+    def repl(m):
+        raw = m.group(1)
+        res = resolve_bracket_token(raw)
+        if res is None:
+            return f'{PREVIEW_WARN_OPEN}[{raw}]{PREVIEW_WARN_CLOSE}'
+        if res[0]=='field':
+            v = values.get(res[1]) or f'({LABELS.get(res[1], res[1])})'
+            return f'{PREVIEW_OK_OPEN}{v}{PREVIEW_OK_CLOSE}'
+        if res[0]=='computed':
+            try:
+                v = COMPUTED_BRACKETS[res[1]](values, respondents) or ''
+            except Exception:
+                v = ''
+            v = v or '(otomatik hesaplanır)'
+            return f'{PREVIEW_OK_OPEN}{v}{PREVIEW_OK_CLOSE}'
+        _, idx, rf = res
+        if 0 <= idx < len(respondents):
+            v = respondents[idx].get(rf) or f'(karşı taraf {idx+1})'
+        else:
+            v = f'(karşı taraf {idx+1} tanımsız)'
+        return f'{PREVIEW_OK_OPEN}{v}{PREVIEW_OK_CLOSE}'
+    return BRACKET_RE.sub(repl, text)
+
 # NOT: Aşağıdaki tüm girdilerde ':' ile değer arasında SADECE '[ \t]*' kullanılır,
 # '\s*' DEĞİL. '\s*' satır sonunu (\n) da yuttuğu için, bir alan boş bırakıldığında
 # (ör. "DOSYA TÜRÜ :" boş, hemen altında "Uyuşmazlık Türü : ...") regex bir sonraki
